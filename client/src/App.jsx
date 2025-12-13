@@ -7,6 +7,7 @@ import Navbar from './components/Shared/Navbar';
 import Notification from './components/Shared/Notification';
 import AlertBanner from './components/Shared/AlertBanner';
 import ProtectedRoute from './components/Shared/ProtectedRoute';
+import { GuestRoute } from './components/Shared/ProtectedRoute';
 
 // Pages
 import Home from './pages/Home';
@@ -15,6 +16,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import ReportPage from './pages/ReportPage';
+import ReportDetailPage from './pages/ReportDetailPage';
 import AlertPage from './pages/AlertPage';
 import AlertCreatePage from './pages/AlertCreatePage';
 import AdminPage from './pages/AdminPage';
@@ -34,15 +36,45 @@ function App() {
             
             <main>
               <Routes>
-                {/* Public Routes */}
+                {/* Public Routes - Only Home/Dashboard visible without login */}
                 <Route path="/" element={<Home />} />
-                <Route path="/map" element={<MapPage />} />
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/register" element={<RegisterPage />} />
-                <Route path="/alerts" element={<AlertPage />} />
                 <Route path="/unauthorized" element={<UnauthorizedPage />} />
                 
-                {/* Protected Routes - Any authenticated user */}
+                {/* Guest Only Routes - Redirect to map if already logged in */}
+                <Route 
+                  path="/login" 
+                  element={
+                    <GuestRoute redirectTo="/map">
+                      <LoginPage />
+                    </GuestRoute>
+                  } 
+                />
+                <Route 
+                  path="/register" 
+                  element={
+                    <GuestRoute redirectTo="/map">
+                      <RegisterPage />
+                    </GuestRoute>
+                  } 
+                />
+                
+                {/* Protected Routes - Require authentication */}
+                <Route 
+                  path="/map" 
+                  element={
+                    <ProtectedRoute>
+                      <MapPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/alerts" 
+                  element={
+                    <ProtectedRoute>
+                      <AlertPage />
+                    </ProtectedRoute>
+                  } 
+                />
                 <Route 
                   path="/dashboard" 
                   element={
@@ -56,6 +88,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <ReportPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/reports/:id" 
+                  element={
+                    <ProtectedRoute>
+                      <ReportDetailPage />
                     </ProtectedRoute>
                   } 
                 />

@@ -159,9 +159,10 @@ verificationSchema.statics.generateCode = function () {
 };
 
 // Static method to create email verification
-verificationSchema.statics.createEmailVerification = async function (userId, email) {
+verificationSchema.statics.createEmailVerification = async function (userId, email, firstName = 'User') {
   const token = this.generateToken();
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+  const code = this.generateCode(); // Generate 6-digit code
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes for code
 
   // Cancel any existing pending email verifications
   await this.updateMany(
@@ -169,14 +170,26 @@ verificationSchema.statics.createEmailVerification = async function (userId, ema
     { status: 'cancelled' }
   );
 
-  return this.create({
+  const verification = await this.create({
     user: userId,
     type: 'email',
     token: token,
+    code: code, // Store the 6-digit code
     data: { email },
     expiresAt,
     maxAttempts: 5,
   });
+
+  // Send verification email
+  try {
+    const { sendVerificationEmail } = require('../utils/emailService');
+    await sendVerificationEmail(email, code, firstName);
+  } catch (error) {
+    console.error('[Verification] Failed to send email:', error.message);
+    // Don't throw - verification record is created, email just failed
+  }
+
+  return verification;
 };
 
 // Static method to create phone verification

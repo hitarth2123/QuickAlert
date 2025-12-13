@@ -2,8 +2,15 @@
 
 const defaultOptions = {
   enableHighAccuracy: true,
-  timeout: 10000,
-  maximumAge: 60000, // Cache position for 1 minute
+  timeout: 15000, // Increased timeout for better accuracy
+  maximumAge: 10000, // Reduced cache to 10 seconds for fresher location
+};
+
+// High accuracy options (for critical operations like verification)
+export const highAccuracyOptions = {
+  enableHighAccuracy: true,
+  timeout: 20000,
+  maximumAge: 0, // Always get fresh position
 };
 
 // Check if geolocation is supported
@@ -27,6 +34,11 @@ export const getCurrentPosition = (options = {}) => {
       { ...defaultOptions, ...options }
     );
   });
+};
+
+// Get high accuracy position (for critical operations like verification)
+export const getHighAccuracyPosition = () => {
+  return getCurrentPosition(highAccuracyOptions);
 };
 
 // Watch position (returns watch ID)

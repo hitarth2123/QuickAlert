@@ -75,7 +75,7 @@ export const reportsApi = {
   delete: (id) => api.delete(`/reports/${id}`),
   getNearby: (lat, lng, radius = 5000) =>
     api.get('/reports/nearby', { params: { lat, lng, radius } }),
-  verify: (id, vote) => api.post(`/reports/${id}/verify`, { vote }),
+  verify: (id, data) => api.post(`/reports/${id}/verify`, data),
   moderate: (id, status, reason) =>
     api.put(`/reports/${id}/moderate`, { status, reason }),
   getCategories: () => api.get('/reports/categories/list'),

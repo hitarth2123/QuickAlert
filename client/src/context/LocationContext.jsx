@@ -107,12 +107,12 @@ export const LocationProvider = ({ children }) => {
     };
   }, [stopWatching]);
 
-  // Get initial location on mount
+  // Get initial location on mount and when authentication changes
   useEffect(() => {
     getLocation().catch(() => {
       // Silently fail - user may not have granted permission yet
     });
-  }, []);
+  }, [isAuthenticated]); // Re-fetch when user logs in
 
   // Calculate distance from current location to a point
   const distanceTo = useCallback(

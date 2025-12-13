@@ -5,12 +5,110 @@ const User = require('../models/User');
 const Verification = require('../models/Verification');
 const { protect, generateToken, generateRefreshToken, verifyRefreshToken } = require('../middleware/auth');
 const { authLimiter, passwordResetLimiter } = require('../middleware/rateLimiter');
+const { verifyFirebaseToken } = require('../config/firebase');
 
 /**
  * ============================================
  * AUTHENTICATION ROUTES (/api/auth)
  * ============================================
  */
+
+/**
+ * @route   POST /api/auth/firebase-verify
+ * @desc    Verify Firebase token and create/login user
+ * @access  Public
+ */
+router.post('/firebase-verify', async (req, res) => {
+  try {
+    const { firebaseToken } = req.body;
+
+    if (!firebaseToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Firebase token is required',
+      });
+    }
+
+    // Verify the Firebase token
+    let decodedToken;
+    try {
+      decodedToken = await verifyFirebaseToken(firebaseToken);
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid Firebase token',
+      });
+    }
+
+    const { uid, email, phone_number, name, picture } = decodedToken;
+
+    // Check if user exists by Firebase UID, email, or phone
+    let user = await User.findOne({
+      $or: [
+        { firebaseUid: uid },
+        ...(email ? [{ email: email.toLowerCase() }] : []),
+        ...(phone_number ? [{ phone: phone_number }] : [])
+      ]
+    });
+
+    if (user) {
+      // Update Firebase UID if not set
+      if (!user.firebaseUid) {
+        user.firebaseUid = uid;
+        if (phone_number && !user.phone) {
+          user.phone = phone_number;
+        }
+        user.isVerified = true; // Firebase verified
+        await user.save();
+      }
+    } else {
+      // Create new user from Firebase data
+      const nameParts = (name || 'User').split(' ');
+      user = await User.create({
+        firebaseUid: uid,
+        firstName: nameParts[0] || 'User',
+        lastName: nameParts.slice(1).join(' ') || '',
+        email: email?.toLowerCase() || `${uid}@firebase.local`,
+        phone: phone_number || undefined,
+        password: crypto.randomBytes(32).toString('hex'), // Random password for Firebase users
+        isVerified: true, // Firebase verified
+        avatar: picture ? { url: picture } : undefined,
+      });
+    }
+
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
+
+    // Generate tokens
+    const token = generateToken(user);
+    const refreshToken = generateRefreshToken(user._id);
+
+    res.json({
+      success: true,
+      message: 'Firebase authentication successful',
+      data: {
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          isVerified: user.isVerified,
+        },
+        token,
+        refreshToken,
+      },
+    });
+  } catch (error) {
+    console.error('Firebase verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during Firebase verification',
+    });
+  }
+});
 
 /**
  * @route   POST /api/auth/register
@@ -52,8 +150,8 @@ router.post('/register', authLimiter, async (req, res) => {
     const verificationToken = user.generateEmailVerificationToken();
     await user.save();
 
-    // Create verification record
-    await Verification.createEmailVerification(user._id, user.email);
+    // Create verification record and send email
+    await Verification.createEmailVerification(user._id, user.email, user.firstName);
 
     // Generate JWT token with full payload {userId, role, email}
     const token = generateToken(user);
@@ -96,6 +194,150 @@ router.post('/register', authLimiter, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error during registration',
+    });
+  }
+});
+
+/**
+ * @route   POST /api/auth/verify-email
+ * @desc    Verify email with 6-digit code
+ * @access  Public
+ */
+router.post('/verify-email', async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email and verification code',
+      });
+    }
+
+    // Find the user
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Check if already verified
+    if (user.isVerified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is already verified',
+      });
+    }
+
+    // Find pending verification
+    const verification = await Verification.findOne({
+      user: user._id,
+      type: 'email',
+      status: 'pending',
+      code: code,
+    });
+
+    if (!verification) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid verification code',
+      });
+    }
+
+    // Check if expired
+    if (new Date() > verification.expiresAt) {
+      verification.status = 'expired';
+      await verification.save();
+      return res.status(400).json({
+        success: false,
+        message: 'Verification code has expired. Please request a new one.',
+      });
+    }
+
+    // Check max attempts
+    if (verification.attempts >= verification.maxAttempts) {
+      verification.status = 'expired';
+      await verification.save();
+      return res.status(400).json({
+        success: false,
+        message: 'Too many attempts. Please request a new code.',
+      });
+    }
+
+    // Increment attempts
+    verification.attempts += 1;
+    verification.lastAttemptAt = new Date();
+
+    // Mark verification as approved
+    verification.status = 'approved';
+    verification.verifiedAt = new Date();
+    await verification.save();
+
+    // Update user as verified
+    user.isVerified = true;
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully',
+    });
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during verification',
+    });
+  }
+});
+
+/**
+ * @route   POST /api/auth/resend-verification
+ * @desc    Resend verification code
+ * @access  Public
+ */
+router.post('/resend-verification', authLimiter, async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email',
+      });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      // Don't reveal if user exists
+      return res.json({
+        success: true,
+        message: 'If an account exists, a verification code has been sent',
+      });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is already verified',
+      });
+    }
+
+    // Create new verification and send email
+    await Verification.createEmailVerification(user._id, user.email, user.firstName);
+
+    res.json({
+      success: true,
+      message: 'Verification code sent to your email',
+    });
+  } catch (error) {
+    console.error('Resend verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
     });
   }
 });

@@ -235,6 +235,116 @@ router.get('/', searchLimiter, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/reports/nearby
+ * @desc    Get reports near a location
+ * @access  Public
+ */
+router.get('/nearby', searchLimiter, async (req, res) => {
+  try {
+    const {
+      lat,
+      lng,
+      radius = 5000, // Default 5km in meters
+      page = 1,
+      limit = 50,
+      category,
+      severity,
+      status,
+    } = req.query;
+
+    if (!lat || !lng) {
+      return res.status(400).json({
+        success: false,
+        message: 'Latitude and longitude are required',
+      });
+    }
+
+    // Build query
+    const query = {
+      isExpired: { $ne: true },
+      status: { $nin: ['rejected', 'duplicate'] },
+    };
+
+    // Category filter
+    if (category) {
+      query.category = category;
+    }
+
+    // Severity filter
+    if (severity) {
+      query.severity = severity;
+    }
+
+    // Status filter
+    if (status) {
+      query.status = status;
+    }
+
+    // Geospatial query using $geoWithin (works with countDocuments)
+    // Convert radius from meters to km, then to radians for $centerSphere
+    const radiusKm = parseFloat(radius) / 1000;
+    query['location.coordinates'] = {
+      $geoWithin: {
+        $centerSphere: [
+          [parseFloat(lng), parseFloat(lat)],
+          radiusKm / 6371, // Convert km to radians (Earth's radius = 6371 km)
+        ],
+      },
+    };
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [reports, total] = await Promise.all([
+      Report.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate('reporter', 'firstName lastName avatar')
+        .select('-sensitiveData -votes.voters'),
+      Report.countDocuments(query),
+    ]);
+
+    // Add distance to each report
+    const processedReports = reports.map((report) => {
+      const reportObj = report.toObject();
+
+      // Hide reporter info if anonymous
+      if (reportObj.isAnonymous) {
+        reportObj.reporter = null;
+      }
+
+      // Add distance
+      if (report.location?.coordinates) {
+        reportObj.distance = distanceBetweenCoords(
+          report.location.coordinates,
+          [parseFloat(lng), parseFloat(lat)]
+        ).toFixed(2);
+      }
+
+      return reportObj;
+    });
+
+    res.json({
+      success: true,
+      data: processedReports,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+        hasMore: skip + reports.length < total,
+      },
+    });
+  } catch (error) {
+    console.error('Get nearby reports error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
+  }
+});
+
+/**
  * @route   GET /api/reports/:id
  * @desc    Get single report details
  * @access  Public
@@ -317,8 +427,8 @@ router.post('/:id/verify', protect, async (req, res) => {
       });
     }
 
-    // Check if user is within 2km of report location
-    const VERIFICATION_RADIUS_KM = 2;
+    // Check if user is within verification radius of report location
+    const VERIFICATION_RADIUS_KM = 5; // Increased to 5km for better usability
     let userLocation = null;
 
     // Get user location from request body or user profile
@@ -328,14 +438,23 @@ router.post('/:id/verify', protect, async (req, res) => {
       userLocation = req.user.location.coordinates;
     }
 
+    // Debug logging
+    console.log('Verify request - User location:', userLocation);
+    console.log('Verify request - Report location:', report.location?.coordinates);
+
     if (userLocation && report.location?.coordinates) {
       const distance = distanceBetweenCoords(report.location.coordinates, userLocation);
+      console.log('Verify request - Calculated distance:', distance.toFixed(2), 'km');
+      
       if (distance > VERIFICATION_RADIUS_KM) {
         return res.status(403).json({
           success: false,
           message: `You must be within ${VERIFICATION_RADIUS_KM}km of the report location to verify. Your distance: ${distance.toFixed(2)}km`,
         });
       }
+    } else if (!userLocation) {
+      // If no location available, allow verification but log it
+      console.log('Verify request - No user location available, allowing verification');
     }
 
     // Check if user already voted

@@ -12,6 +12,8 @@ const { logger, requestLogger } = require('./utils/logger');
 // Import configurations
 const connectDB = require('./config/db');
 const { testUploadThingConnection } = require('./config/uploadthing');
+const { initializeTransporter } = require('./utils/emailService');
+const { initializeFirebaseAdmin } = require('./config/firebase');
 
 // Import middleware
 const { generalLimiter } = require('./middleware/rateLimiter');
@@ -55,6 +57,12 @@ connectDB();
 
 // Test UploadThing connection
 testUploadThingConnection();
+
+// Initialize email service
+initializeTransporter();
+
+// Initialize Firebase Admin (optional - for token verification)
+initializeFirebaseAdmin();
 
 // Security middleware
 app.use(helmet({

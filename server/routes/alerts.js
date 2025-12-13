@@ -253,6 +253,107 @@ router.get('/', searchLimiter, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/alerts/nearby
+ * @desc    Get alerts near a location
+ * @access  Public
+ */
+router.get('/nearby', searchLimiter, async (req, res) => {
+  try {
+    const {
+      lat,
+      lng,
+      radius = 10, // Default 10km
+      page = 1,
+      limit = 50,
+      type,
+      severity,
+    } = req.query;
+
+    if (!lat || !lng) {
+      return res.status(400).json({
+        success: false,
+        message: 'Latitude and longitude are required',
+      });
+    }
+
+    // Build query for active alerts
+    const query = {
+      isActive: true,
+      status: 'active',
+      $or: [
+        { effectiveUntil: { $exists: false } },
+        { effectiveUntil: { $gt: new Date() } },
+      ],
+    };
+
+    // Type filter
+    if (type) {
+      query.type = type;
+    }
+
+    // Severity filter
+    if (severity) {
+      query.severity = severity;
+    }
+
+    // Geospatial query - radius in meters, convert to km for centerSphere
+    const radiusKm = parseFloat(radius) / 1000; // Convert meters to km
+    query['targetArea.coordinates'] = {
+      $geoWithin: {
+        $centerSphere: [
+          [parseFloat(lng), parseFloat(lat)],
+          radiusKm / 6371, // Convert km to radians
+        ],
+      },
+    };
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [alerts, total] = await Promise.all([
+      Alert.find(query)
+        .sort({ priority: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate('createdBy', 'firstName lastName')
+        .select('-interactions.acknowledgedBy -interactions.safeCheckIns'),
+      Alert.countDocuments(query),
+    ]);
+
+    // Add distance to each alert
+    const processedAlerts = alerts.map((alert) => {
+      const alertObj = alert.toObject();
+
+      if (alert.targetArea?.coordinates) {
+        alertObj.distance = distanceBetweenCoords(
+          alert.targetArea.coordinates,
+          [parseFloat(lng), parseFloat(lat)]
+        ).toFixed(2);
+      }
+
+      return alertObj;
+    });
+
+    res.json({
+      success: true,
+      data: processedAlerts,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+        hasMore: skip + alerts.length < total,
+      },
+    });
+  } catch (error) {
+    console.error('Get nearby alerts error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
+  }
+});
+
+/**
  * @route   GET /api/alerts/:id
  * @desc    Get single alert details
  * @access  Public

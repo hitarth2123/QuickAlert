@@ -3,6 +3,11 @@ const bcrypt = require('bcrypt');
 
 const userSchema = new mongoose.Schema(
   {
+    firebaseUid: {
+      type: String,
+      unique: true,
+      sparse: true, // Allow null values while maintaining uniqueness
+    },
     firstName: {
       type: String,
       required: [true, 'First name is required'],

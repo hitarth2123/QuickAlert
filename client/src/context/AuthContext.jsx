@@ -67,6 +67,25 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Firebase authentication (for phone OTP and Google sign-in)
+  const firebaseAuth = async (firebaseToken) => {
+    try {
+      setError(null);
+      const response = await api.post('/auth/firebase-verify', { firebaseToken });
+      const { token: newToken, user: userData } = response.data.data;
+      
+      localStorage.setItem('token', newToken);
+      setToken(newToken);
+      setUser(userData);
+      
+      return response.data;
+    } catch (err) {
+      const message = err.response?.data?.message || 'Firebase authentication failed';
+      setError(message);
+      throw new Error(message);
+    }
+  };
+
   const login = async (email, password, deviceInfo = {}) => {
     try {
       setError(null);
@@ -193,6 +212,7 @@ export const AuthProvider = ({ children }) => {
     isSuperAdmin,
     register,
     verifyEmail,
+    firebaseAuth,
     login,
     logout,
     updateProfile,

@@ -163,14 +163,24 @@ const MapView = ({
 }) => {
   const mapRef = useRef(null);
   const [mapCenter, setMapCenter] = useState(center);
+  const [hasFlownToUser, setHasFlownToUser] = useState(false);
   const { location } = useGeoLocation();
 
-  // Center map on user location when available
+  // Fly to user location when first available
+  const flyToPosition = useMemo(() => {
+    if (location && !hasFlownToUser && !selectedLocation) {
+      return [location.latitude, location.longitude];
+    }
+    return null;
+  }, [location, hasFlownToUser, selectedLocation]);
+
+  // Mark that we've flown to user location
   useEffect(() => {
-    if (location && !selectedLocation) {
+    if (location && !hasFlownToUser) {
+      setHasFlownToUser(true);
       setMapCenter([location.latitude, location.longitude]);
     }
-  }, [location, selectedLocation]);
+  }, [location, hasFlownToUser]);
 
   // Handle map click for selection mode
   const handleMapClick = useCallback(
@@ -233,6 +243,9 @@ const MapView = ({
 
         {/* Map events handler */}
         <MapEvents onClick={handleMapClick} onMoveEnd={onMoveEnd} />
+
+        {/* Fly to user location on first load */}
+        {flyToPosition && <FlyToLocation position={flyToPosition} zoom={15} />}
 
         {/* Locate control */}
         <LocateControl />
