@@ -14,12 +14,18 @@ const LoadingSpinner = () => (
 // Protected route component
 const ProtectedRoute = ({ 
   children, 
-  requiredRoles = [], 
+  requiredRoles = [],
+  requiredRole,  // Single role support for backwards compatibility
   redirectTo = '/login',
   requireAuth = true 
 }) => {
   const { isAuthenticated, user, loading } = useAuth();
   const location = useLocation();
+
+  // Combine single role and roles array
+  const allRequiredRoles = requiredRole 
+    ? [...requiredRoles, requiredRole]
+    : requiredRoles;
 
   // Show loading while checking auth
   if (loading) {
@@ -33,10 +39,12 @@ const ProtectedRoute = ({
   }
 
   // If specific roles are required, check if user has one of them
-  if (requiredRoles.length > 0 && user) {
-    const hasRequiredRole = requiredRoles.includes(user.role);
+  if (allRequiredRoles.length > 0 && user) {
+    // Admin and super_admin can access all routes
+    const isAdminUser = user.role === 'admin' || user.role === 'super_admin';
+    const hasRequiredRole = allRequiredRoles.includes(user.role);
     
-    if (!hasRequiredRole) {
+    if (!hasRequiredRole && !isAdminUser) {
       // User doesn't have required role, redirect to unauthorized page or home
       return <Navigate to="/unauthorized" replace />;
     }

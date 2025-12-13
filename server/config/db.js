@@ -1,7 +1,10 @@
 const mongoose = require('mongoose');
+const { logger } = require('../utils/logger');
 
 const connectDB = async () => {
   try {
+    logger.connection('MongoDB', 'pending', 'Connecting...');
+    
     // Connection options
     const options = {
       maxPoolSize: 10,
@@ -13,32 +16,31 @@ const connectDB = async () => {
 
     const conn = await mongoose.connect(process.env.MONGODB_URI, options);
 
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
-    console.log(`Database: ${conn.connection.name}`);
+    logger.connection('MongoDB', 'success', `Connected to ${conn.connection.host}/${conn.connection.name}`);
 
     // Handle connection events
     mongoose.connection.on('error', (err) => {
-      console.error(`MongoDB connection error: ${err}`);
+      logger.error(`MongoDB connection error`, err);
     });
 
     mongoose.connection.on('disconnected', () => {
-      console.log('MongoDB disconnected');
+      logger.warn('MongoDB disconnected');
     });
 
     mongoose.connection.on('reconnected', () => {
-      console.log('MongoDB reconnected');
+      logger.success('MongoDB reconnected');
     });
 
     // Graceful shutdown
     process.on('SIGINT', async () => {
       await mongoose.connection.close();
-      console.log('MongoDB connection closed due to app termination');
+      logger.info('MongoDB connection closed due to app termination');
       process.exit(0);
     });
 
     return conn;
   } catch (error) {
-    console.error(`Error connecting to MongoDB: ${error.message}`);
+    logger.error(`Error connecting to MongoDB: ${error.message}`);
     process.exit(1);
   }
 };

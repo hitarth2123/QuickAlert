@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Session = require('../models/Session');
+const { logger } = require('../utils/logger');
 
 /**
  * Socket.IO Real-Time Event Handler
@@ -122,14 +123,14 @@ const socketHandler = (io) => {
           socket.disconnect(true);
         }
         cleanupConnection(socketId);
-        console.log(`Cleaned up stale connection: ${socketId}`);
+        logger.socket('cleanup', socketId, 'Stale connection removed');
       }
       // Update lastSeen every 5 minutes
       else if (conn.userId && timeSinceLastPing < updateThreshold) {
         try {
           await User.findByIdAndUpdate(conn.userId, { lastSeen: new Date() });
         } catch (error) {
-          console.error('Error updating lastSeen:', error);
+          logger.error('Error updating lastSeen', error);
         }
       }
     });
@@ -155,7 +156,7 @@ const socketHandler = (io) => {
       // Allow connection even without auth (for public alerts)
       next();
     } catch (error) {
-      console.error('Socket auth error:', error.message);
+      logger.warn(`Socket auth: ${error.message}`);
       next();
     }
   });
@@ -164,8 +165,8 @@ const socketHandler = (io) => {
    * Connection handler
    */
   io.on('connection', (socket) => {
-    console.log(`[Socket] Connected: ${socket.id}${socket.user ? ` (User: ${socket.user.email})` : ' (Anonymous)'}`);
-
+    const userInfo = socket.user ? socket.user.email : 'Anonymous';
+    logger.socket('connect', socket.id, userInfo);
     // Initialize connection tracking
     activeConnections.set(socket.id, {
       userId: socket.userId || null,

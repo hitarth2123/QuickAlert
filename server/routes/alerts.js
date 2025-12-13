@@ -5,8 +5,9 @@ const User = require('../models/User');
 const { protect } = require('../middleware/auth');
 const { authorize, ROLES } = require('../middleware/roleCheck');
 const { alertBroadcastLimiter, searchLimiter } = require('../middleware/rateLimiter');
-const { upload } = require('../config/cloudinary');
+const { deleteFromUploadThing } = require('../config/uploadthing');
 const { distanceBetweenCoords } = require('../utils/geoUtils');
+const { logger } = require('../utils/logger');
 
 /**
  * ============================================
@@ -61,7 +62,6 @@ router.post(
   protect,
   authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN, ROLES.RESPONDER),
   alertBroadcastLimiter,
-  upload.array('media', 3),
   async (req, res) => {
     try {
       const {
@@ -73,6 +73,7 @@ router.post(
         effectiveFrom,
         effectiveUntil,
         instructions,
+        media, // Array of { url, key, type } from UploadThing
       } = req.body;
 
       // Validate required fields
@@ -95,12 +96,13 @@ router.post(
         });
       }
 
-      // Process uploaded media
-      const media = req.files?.map((file) => ({
-        url: file.path,
-        publicId: file.filename,
-        type: file.mimetype.startsWith('image/') ? 'image' : 'video',
-      })) || [];
+      // Process media array (already uploaded via UploadThing)
+      const parsedMedia = typeof media === 'string' ? JSON.parse(media) : media;
+      const processedMedia = (parsedMedia || []).map((item) => ({
+        url: item.url,
+        publicId: item.key, // UploadThing file key
+        type: item.type || 'image',
+      }));
 
       const alert = await Alert.create({
         title,
@@ -123,7 +125,7 @@ router.post(
         effectiveFrom: effectiveFrom || new Date(),
         effectiveUntil,
         instructions: parsedInstructions || [],
-        media,
+        media: processedMedia,
         status: 'active',
         isActive: true,
       });

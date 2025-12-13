@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, Circle, ZoomControl } from 'react-leaflet';
+import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useLocation as useGeoLocation } from '../../context/LocationContext';
@@ -152,9 +153,11 @@ const MapView = ({
   onMoveEnd,
   onReportClick,
   onAlertClick,
+  onVerifyReport,
   showUserLocation = true,
   selectedLocation = null,
   enableSelection = false,
+  enableClustering = true,
   className = '',
   children,
 }) => {
@@ -181,6 +184,34 @@ const MapView = ({
     },
     [enableSelection, onMapClick]
   );
+
+  // Custom cluster icon creator
+  const createClusterCustomIcon = useCallback((cluster) => {
+    const count = cluster.getChildCount();
+    let size = 'small';
+    let className = 'cluster-marker-small';
+    
+    if (count >= 100) {
+      size = 'large';
+      className = 'cluster-marker-large';
+    } else if (count >= 10) {
+      size = 'medium';
+      className = 'cluster-marker-medium';
+    }
+    
+    const sizeMap = { small: 30, medium: 40, large: 50 };
+    const iconSize = sizeMap[size];
+    
+    return L.divIcon({
+      html: `<div class="flex items-center justify-center w-full h-full rounded-full bg-red-600 text-white font-bold text-sm border-2 border-white shadow-lg">${count}</div>`,
+      className: `custom-cluster-icon ${className}`,
+      iconSize: L.point(iconSize, iconSize, true),
+    });
+  }, []);
+
+  // Memoize reports and alerts for better performance
+  const memoizedReports = useMemo(() => reports, [reports]);
+  const memoizedAlerts = useMemo(() => alerts, [alerts]);
 
   return (
     <div className={`relative w-full h-full ${className}`}>
@@ -226,18 +257,43 @@ const MapView = ({
           </>
         )}
 
-        {/* Report markers */}
-        {reports.map((report) => (
-          <IncidentMarker
-            key={report._id}
-            incident={report}
-            type="report"
-            onClick={() => onReportClick && onReportClick(report)}
-          />
-        ))}
+        {/* Report markers with optional clustering */}
+        {enableClustering ? (
+          <MarkerClusterGroup
+            chunkedLoading
+            iconCreateFunction={createClusterCustomIcon}
+            maxClusterRadius={60}
+            spiderfyOnMaxZoom={true}
+            showCoverageOnHover={false}
+            zoomToBoundsOnClick={true}
+            disableClusteringAtZoom={18}
+          >
+            {memoizedReports.map((report) => (
+              <IncidentMarker
+                key={report._id}
+                incident={report}
+                type="report"
+                onClick={() => onReportClick && onReportClick(report)}
+                onVerify={onVerifyReport}
+                userLocation={location}
+              />
+            ))}
+          </MarkerClusterGroup>
+        ) : (
+          memoizedReports.map((report) => (
+            <IncidentMarker
+              key={report._id}
+              incident={report}
+              type="report"
+              onClick={() => onReportClick && onReportClick(report)}
+              onVerify={onVerifyReport}
+              userLocation={location}
+            />
+          ))
+        )}
 
-        {/* Alert markers */}
-        {alerts.map((alert) => (
+        {/* Alert markers (not clustered - always visible) */}
+        {memoizedAlerts.map((alert) => (
           <IncidentMarker
             key={alert._id}
             incident={alert}

@@ -6,8 +6,12 @@ const cors = require('cors');
 const helmet = require('helmet');
 const { Server } = require('socket.io');
 
+// Import logger
+const { logger, requestLogger } = require('./utils/logger');
+
 // Import configurations
 const connectDB = require('./config/db');
+const { testUploadThingConnection } = require('./config/uploadthing');
 
 // Import middleware
 const { generalLimiter } = require('./middleware/rateLimiter');
@@ -17,6 +21,7 @@ const authRoutes = require('./routes/auth');
 const reportRoutes = require('./routes/reports');
 const alertRoutes = require('./routes/alerts');
 const analyticsRoutes = require('./routes/analytics');
+const uploadRoutes = require('./routes/upload');
 
 // Import socket handler
 const socketHandler = require('./sockets/socketHandler');
@@ -43,9 +48,13 @@ app.set('io', io);
 
 // Initialize socket handler
 socketHandler(io);
+logger.connection('Socket.IO', 'success', 'Initialized');
 
 // Connect to MongoDB
 connectDB();
+
+// Test UploadThing connection
+testUploadThingConnection();
 
 // Security middleware
 app.use(helmet({
@@ -69,13 +78,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Apply general rate limiting to all routes
 app.use(generalLimiter);
 
-// Request logging (development)
-if (process.env.NODE_ENV === 'development') {
-  app.use((req, res, next) => {
-    console.log(`${req.method} ${req.path}`);
-    next();
-  });
-}
+// Request logging middleware
+app.use(requestLogger);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -92,6 +96,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // 404 handler
 app.use((req, res, next) => {
@@ -103,7 +108,7 @@ app.use((req, res, next) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
+  logger.error(`${req.method} ${req.path}`, err);
 
   // Multer errors
   if (err.name === 'MulterError') {
@@ -180,20 +185,23 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
-  console.log(`
-  ╔══════════════════════════════════════════════╗
-  ║                                              ║
-  ║   QuickAlert API Server                      ║
-  ║   Running on port ${PORT}                        ║
-  ║   Environment: ${process.env.NODE_ENV || 'development'}                  ║
-  ║                                              ║
-  ╚══════════════════════════════════════════════╝
-  `);
+  logger.banner(PORT, process.env.NODE_ENV || 'development');
+  
+  // Log available routes
+  logger.info('Available API Routes:');
+  logger.info('  /api/auth      - Authentication endpoints');
+  logger.info('  /api/reports   - Report management');
+  logger.info('  /api/alerts    - Alert system');
+  logger.info('  /api/analytics - Analytics data');
+  logger.info('  /api/upload    - File uploads (UploadThing)');
+  logger.info('  /health        - Health check');
+  logger.divider();
+  logger.success('Server ready to accept connections');
 });
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Promise Rejection:', err);
+  logger.error('Unhandled Promise Rejection', err);
   // Close server & exit process
   server.close(() => {
     process.exit(1);
@@ -202,7 +210,7 @@ process.on('unhandledRejection', (err) => {
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
+  logger.error('Uncaught Exception', err);
   process.exit(1);
 });
 

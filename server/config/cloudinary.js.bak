@@ -1,13 +1,35 @@
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const CloudinaryStorage = require('multer-storage-cloudinary');
+const { logger } = require('../utils/logger');
 
 // Configure Cloudinary
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'demo',
+  api_key: process.env.CLOUDINARY_API_KEY || 'demo',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'demo',
 });
+
+// Test Cloudinary connection
+const testCloudinaryConnection = async () => {
+  try {
+    logger.connection('Cloudinary', 'pending', 'Testing connection...');
+    const result = await cloudinary.api.ping();
+    if (result.status === 'ok') {
+      logger.connection('Cloudinary', 'success', `Connected to ${process.env.CLOUDINARY_CLOUD_NAME || 'demo'}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    // If using demo credentials, just warn
+    if (process.env.CLOUDINARY_CLOUD_NAME === 'demo' || !process.env.CLOUDINARY_CLOUD_NAME) {
+      logger.connection('Cloudinary', 'warning', 'Using demo credentials (uploads disabled)');
+      return false;
+    }
+    logger.connection('Cloudinary', 'error', `Connection failed: ${error.message || 'Unknown error'}`);
+    return false;
+  }
+};
 
 // Multer storage configuration for Cloudinary
 const storage = new CloudinaryStorage({
@@ -73,7 +95,7 @@ const deleteFromCloudinary = async (publicId, resourceType = 'image') => {
     });
     return result;
   } catch (error) {
-    console.error('Error deleting from Cloudinary:', error);
+    logger.error('Error deleting from Cloudinary:', error);
     throw error;
   }
 };
@@ -93,4 +115,5 @@ module.exports = {
   upload,
   deleteFromCloudinary,
   getOptimizedUrl,
+  testCloudinaryConnection,
 };

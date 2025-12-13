@@ -101,6 +101,17 @@ export const analyticsApi = {
   getReportHeatmap: (params) => api.get('/analytics/reports/heatmap', { params }),
   getAlertStats: (params) => api.get('/analytics/alerts', { params }),
   getAlertHeatmap: (params) => api.get('/analytics/alerts/heatmap', { params }),
+  getHeatmap: (params) => api.get('/analytics/heatmap', { params }),
+};
+
+// Users API (Admin only)
+export const usersApi = {
+  getAll: (params) => api.get('/users', { params }),
+  getById: (id) => api.get(`/users/${id}`),
+  updateRole: (id, role) => api.put(`/users/${id}/role`, { role }),
+  ban: (id) => api.put(`/users/${id}/ban`),
+  unban: (id) => api.put(`/users/${id}/unban`),
+  delete: (id) => api.delete(`/users/${id}`),
 };
 
 // Auth API (for direct usage without context)

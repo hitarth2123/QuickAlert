@@ -77,7 +77,7 @@ const sessionSchema = new mongoose.Schema(
 
 // Indexes
 sessionSchema.index({ userId: 1 });
-sessionSchema.index({ token: 1 }, { unique: true });
+// Note: token index not needed here - created automatically by unique: true in schema
 sessionSchema.index({ 'location.coordinates': '2dsphere' }); // Geospatial for population queries
 sessionSchema.index({ socketId: 1 });
 sessionSchema.index({ isActive: 1 });

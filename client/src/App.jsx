@@ -1,35 +1,120 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import { LocationProvider } from './context/LocationContext';
+
+// Shared Components
+import Navbar from './components/Shared/Navbar';
+import Notification from './components/Shared/Notification';
+import AlertBanner from './components/Shared/AlertBanner';
+import ProtectedRoute from './components/Shared/ProtectedRoute';
+
+// Pages
+import Home from './pages/Home';
+import MapPage from './pages/MapPage';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
+import DashboardPage from './pages/DashboardPage';
+import ReportPage from './pages/ReportPage';
+import AlertPage from './pages/AlertPage';
+import AlertCreatePage from './pages/AlertCreatePage';
+import AdminPage from './pages/AdminPage';
+import ProfilePage from './pages/ProfilePage';
+import UnauthorizedPage from './pages/UnauthorizedPage';
+import NotFoundPage from './pages/NotFoundPage';
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <Router>
+      <AuthProvider>
+        <LocationProvider>
+          <div className="min-h-screen bg-gray-50">
+            <Navbar />
+            <AlertBanner />
+            <Notification />
+            
+            <main>
+              <Routes>
+                {/* Public Routes */}
+                <Route path="/" element={<Home />} />
+                <Route path="/map" element={<MapPage />} />
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/register" element={<RegisterPage />} />
+                <Route path="/alerts" element={<AlertPage />} />
+                <Route path="/unauthorized" element={<UnauthorizedPage />} />
+                
+                {/* Protected Routes - Any authenticated user */}
+                <Route 
+                  path="/dashboard" 
+                  element={
+                    <ProtectedRoute>
+                      <DashboardPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/report" 
+                  element={
+                    <ProtectedRoute>
+                      <ReportPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/profile" 
+                  element={
+                    <ProtectedRoute>
+                      <ProfilePage />
+                    </ProtectedRoute>
+                  } 
+                />
+                
+                {/* Admin Routes */}
+                <Route 
+                  path="/admin" 
+                  element={
+                    <ProtectedRoute requiredRole="admin">
+                      <AdminPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/admin/*" 
+                  element={
+                    <ProtectedRoute requiredRole="admin">
+                      <AdminPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                
+                {/* Responder Routes */}
+                <Route 
+                  path="/responder" 
+                  element={
+                    <ProtectedRoute requiredRole="responder">
+                      <AdminPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                
+                {/* Alert Creation - Responders and Admins */}
+                <Route 
+                  path="/alerts/create" 
+                  element={
+                    <ProtectedRoute requiredRoles={['responder', 'admin', 'super_admin']}>
+                      <AlertCreatePage />
+                    </ProtectedRoute>
+                  } 
+                />
+                
+                {/* 404 Catch-all */}
+                <Route path="*" element={<NotFoundPage />} />
+              </Routes>
+            </main>
+          </div>
+        </LocationProvider>
+      </AuthProvider>
+    </Router>
+  );
 }
 
-export default App
+export default App;

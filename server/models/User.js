@@ -157,7 +157,7 @@ const userSchema = new mongoose.Schema(
 
 // Index for geospatial queries
 userSchema.index({ 'location.coordinates': '2dsphere' });
-userSchema.index({ email: 1 });
+// Note: email index not needed here - created automatically by unique: true in schema
 
 // Virtual for full name
 userSchema.virtual('fullName').get(function () {

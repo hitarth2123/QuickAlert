@@ -4,9 +4,10 @@ const Report = require('../models/Report');
 const { protect, optionalAuth } = require('../middleware/auth');
 const { authorize, ROLES } = require('../middleware/roleCheck');
 const { reportCreationLimiter, searchLimiter } = require('../middleware/rateLimiter');
-const { upload, deleteFromCloudinary } = require('../config/cloudinary');
+const { deleteFromUploadThing } = require('../config/uploadthing');
 const { encrypt, decrypt } = require('../utils/encryption');
 const { distanceBetweenCoords } = require('../utils/geoUtils');
+const { logger } = require('../utils/logger');
 
 /**
  * ============================================
@@ -19,7 +20,7 @@ const { distanceBetweenCoords } = require('../utils/geoUtils');
  * @desc    Submit new incident report
  * @access  Optional (allow anonymous)
  */
-router.post('/', optionalAuth, reportCreationLimiter, upload.array('media', 5), async (req, res) => {
+router.post('/', optionalAuth, reportCreationLimiter, async (req, res) => {
   try {
     const {
       title,
@@ -31,6 +32,7 @@ router.post('/', optionalAuth, reportCreationLimiter, upload.array('media', 5), 
       location,
       isAnonymous,
       tags,
+      media, // Array of { url, key, type } from UploadThing
     } = req.body;
 
     // Validate required fields
@@ -58,12 +60,13 @@ router.post('/', optionalAuth, reportCreationLimiter, upload.array('media', 5), 
       encryptedSensitiveData = encrypt(sensitiveData);
     }
 
-    // Process uploaded media
-    const media = req.files?.map((file) => ({
-      url: file.path,
-      publicId: file.filename,
-      type: file.mimetype.startsWith('image/') ? 'image' : 'video',
-    })) || [];
+    // Process media array (already uploaded via UploadThing)
+    const parsedMedia = typeof media === 'string' ? JSON.parse(media) : media;
+    const processedMedia = (parsedMedia || []).map((item) => ({
+      url: item.url,
+      publicId: item.key, // UploadThing file key
+      type: item.type || 'image',
+    }));
 
     // Parse tags if string
     const parsedTags = typeof tags === 'string' ? JSON.parse(tags) : tags;
@@ -85,7 +88,7 @@ router.post('/', optionalAuth, reportCreationLimiter, upload.array('media', 5), 
         country: parsedLocation.country,
       },
       isAnonymous: isAnonymous === 'true' || isAnonymous === true || !req.user,
-      media,
+      media: processedMedia,
       tags: parsedTags || [],
     };
 
@@ -509,14 +512,16 @@ router.delete(
         });
       }
 
-      // Delete associated media from Cloudinary
-      for (const media of report.media) {
-        if (media.publicId) {
-          try {
-            await deleteFromCloudinary(media.publicId, media.type === 'video' ? 'video' : 'image');
-          } catch (err) {
-            console.error('Error deleting media:', err);
-          }
+      // Delete associated media from UploadThing
+      const fileKeys = report.media
+        .filter(m => m.publicId)
+        .map(m => m.publicId);
+      
+      if (fileKeys.length > 0) {
+        try {
+          await deleteFromUploadThing(fileKeys);
+        } catch (err) {
+          logger.error(`Error deleting media: ${err.message}`);
         }
       }
 
