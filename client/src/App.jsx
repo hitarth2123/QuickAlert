@@ -18,11 +18,14 @@ import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import ReportPage from './pages/ReportPage';
 import ReportDetailPage from './pages/ReportDetailPage';
+import MyReportsPage from './pages/MyReportsPage';
 import AlertPage from './pages/AlertPage';
 import AlertDetailPage from './pages/AlertDetailPage';
 import AlertCreatePage from './pages/AlertCreatePage';
 import AdminPage from './pages/AdminPage';
+import AdminManagementPage from './pages/AdminManagementPage';
 import ProfilePage from './pages/ProfilePage';
+import SessionsPage from './pages/SessionsPage';
 import NotificationsPage from './pages/NotificationsPage';
 import NotificationSettingsPage from './pages/NotificationSettingsPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
@@ -113,10 +116,26 @@ function App() {
                   } 
                 />
                 <Route 
+                  path="/my-reports" 
+                  element={
+                    <ProtectedRoute>
+                      <MyReportsPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
                   path="/profile" 
                   element={
                     <ProtectedRoute>
                       <ProfilePage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/sessions" 
+                  element={
+                    <ProtectedRoute>
+                      <SessionsPage />
                     </ProtectedRoute>
                   } 
                 />
@@ -143,6 +162,14 @@ function App() {
                   element={
                     <ProtectedRoute requiredRole="admin">
                       <AdminPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/admin/manage" 
+                  element={
+                    <ProtectedRoute requiredRole="admin">
+                      <AdminManagementPage />
                     </ProtectedRoute>
                   } 
                 />

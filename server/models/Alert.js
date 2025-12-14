@@ -117,7 +117,7 @@ const alertSchema = new mongoose.Schema(
     // Status
     status: {
       type: String,
-      enum: ['draft', 'pending_approval', 'active', 'expired', 'cancelled', 'updated'],
+      enum: ['draft', 'pending_approval', 'active', 'resolved', 'expired', 'cancelled', 'updated'],
       default: 'draft',
     },
     // Channels for distribution
@@ -287,7 +287,7 @@ const alertSchema = new mongoose.Schema(
       },
       source: {
         type: String,
-        enum: ['official', 'community_verification', 'automated', 'external'],
+        enum: ['official', 'community_verification', 'automated', 'external', 'admin_report'],
       },
       reportId: String,
       verificationCount: Number,
@@ -295,6 +295,11 @@ const alertSchema = new mongoose.Schema(
         type: Boolean,
         default: false,
       },
+      adminVerified: {
+        type: Boolean,
+        default: false,
+      },
+      verifiedBy: String,
     },
   },
   {

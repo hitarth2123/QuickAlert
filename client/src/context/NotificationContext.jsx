@@ -238,18 +238,19 @@ export const NotificationProvider = ({ children }) => {
       });
     });
 
-    // Subscribe to report verification
+    // Subscribe to report verification - show "Community Verified" notification
     const unsubscribeVerified = socketService.onReportVerified((data) => {
       console.log('[Notifications] Report verified:', data);
       
       const title = data.title || 'Nearby Incident';
       const category = data.category ? `[${data.category.toUpperCase()}] ` : '';
+      const verificationCount = data.verificationCount || 3;
 
       addNotification({
         id: `verified-${data.reportId}`,
         type: 'verification',
-        title: '⚠️ Verified Report Nearby',
-        message: `${category}${title} - Confirmed by ${data.verificationCount} users`,
+        title: '✅ Community Verified Report',
+        message: `${category}${title} - Confirmed by ${verificationCount} community members`,
         data,
         timestamp: new Date().toISOString(),
         read: false,
@@ -258,8 +259,8 @@ export const NotificationProvider = ({ children }) => {
       // Browser notification
       if (Notification.permission === 'granted') {
         try {
-          new Notification('⚠️ Verified Report Nearby', {
-            body: `${category}${title}`,
+          new Notification('✅ Community Verified Report', {
+            body: `${category}${title} - Confirmed by ${verificationCount} community members`,
             icon: '/favicon.ico',
             tag: `verified-${data.reportId}`,
           });

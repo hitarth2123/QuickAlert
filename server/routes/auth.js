@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const User = require('../models/User');
+const Session = require('../models/Session');
 const Verification = require('../models/Verification');
 const { protect, generateToken, generateRefreshToken, verifyRefreshToken } = require('../middleware/auth');
 const { authLimiter, passwordResetLimiter } = require('../middleware/rateLimiter');
@@ -482,6 +483,135 @@ router.get('/me', protect, async (req, res) => {
 });
 
 /**
+ * @route   PUT /api/auth/me
+ * @desc    Update current user profile
+ * @access  Private (JWT required)
+ */
+router.put('/me', protect, async (req, res) => {
+  try {
+    let { firstName, lastName, name, phone, alertPreferences, emergencyContacts } = req.body;
+
+    // If name is provided but not firstName/lastName, split it
+    if (name && !firstName && !lastName) {
+      const nameParts = name.trim().split(/\s+/);
+      firstName = nameParts[0] || '';
+      lastName = nameParts.slice(1).join(' ') || '';
+    }
+
+    // Build update object with only allowed fields
+    const updateFields = {};
+    
+    if (firstName !== undefined && firstName !== '') {
+      if (firstName.length < 1 || firstName.length > 50) {
+        return res.status(400).json({
+          success: false,
+          message: 'First name must be between 1 and 50 characters',
+        });
+      }
+      updateFields.firstName = firstName.trim();
+    }
+    
+    if (lastName !== undefined && lastName !== '') {
+      if (lastName.length < 1 || lastName.length > 50) {
+        return res.status(400).json({
+          success: false,
+          message: 'Last name must be between 1 and 50 characters',
+        });
+      }
+      updateFields.lastName = lastName.trim();
+    }
+    
+    if (phone !== undefined) {
+      // Basic phone validation (allow empty to remove phone)
+      if (phone && !/^[\d\s\-\+\(\)]{10,20}$/.test(phone)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide a valid phone number',
+        });
+      }
+      updateFields.phone = phone ? phone.trim() : '';
+    }
+    
+    if (alertPreferences !== undefined) {
+      // Validate alert preferences structure
+      const validPrefs = {};
+      if (typeof alertPreferences.email === 'boolean') validPrefs.email = alertPreferences.email;
+      if (typeof alertPreferences.sms === 'boolean') validPrefs.sms = alertPreferences.sms;
+      if (typeof alertPreferences.push === 'boolean') validPrefs.push = alertPreferences.push;
+      if (Array.isArray(alertPreferences.categories)) {
+        const validCategories = ['weather', 'fire', 'earthquake', 'flood', 'traffic', 'crime', 'health', 'other'];
+        validPrefs.categories = alertPreferences.categories.filter(c => validCategories.includes(c));
+      }
+      if (typeof alertPreferences.radius === 'number' && alertPreferences.radius >= 1 && alertPreferences.radius <= 100) {
+        validPrefs.radius = alertPreferences.radius;
+      }
+      if (Object.keys(validPrefs).length > 0) {
+        updateFields.alertPreferences = { ...updateFields.alertPreferences, ...validPrefs };
+      }
+    }
+    
+    if (emergencyContacts !== undefined) {
+      if (Array.isArray(emergencyContacts)) {
+        // Validate each emergency contact
+        const validContacts = emergencyContacts.slice(0, 5).map(contact => ({
+          name: String(contact.name || '').trim().slice(0, 100),
+          phone: String(contact.phone || '').trim().slice(0, 20),
+          relationship: String(contact.relationship || '').trim().slice(0, 50),
+        })).filter(c => c.name && c.phone);
+        updateFields.emergencyContacts = validContacts;
+      }
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields to update',
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isVerified: user.isVerified,
+        isActive: user.isActive,
+        location: user.location,
+        alertPreferences: user.alertPreferences,
+        emergencyContacts: user.emergencyContacts,
+        avatar: user.avatar,
+        createdAt: user.createdAt,
+        lastLogin: user.lastLogin,
+      },
+    });
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
+  }
+});
+
+/**
  * @route   PATCH /api/auth/update-location
  * @desc    Update user's last known location
  * @access  Private (JWT required)
@@ -683,6 +813,85 @@ router.post('/reset-password/:token', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error',
+    });
+  }
+});
+
+/**
+ * @route   GET /api/auth/me/sessions
+ * @desc    Get all active sessions for current user
+ * @access  Private (JWT required)
+ */
+router.get('/me/sessions', protect, async (req, res) => {
+  try {
+    const sessions = await Session.find({
+      userId: req.user._id,
+      isActive: true,
+    }).sort({ lastPing: -1 });
+
+    // Get current session token from request
+    const currentToken = req.headers.authorization?.replace('Bearer ', '');
+
+    const formattedSessions = sessions.map((session) => ({
+      _id: session._id,
+      deviceInfo: {
+        platform: session.device?.platform || session.device?.type || 'Unknown',
+        browser: session.device?.userAgent?.split(' ')[0] || 'Unknown Browser',
+      },
+      ip: session.ipAddress,
+      lastActivity: session.lastPing || session.updatedAt,
+      createdAt: session.connectedAt || session.createdAt,
+      isCurrent: session.token === currentToken,
+    }));
+
+    res.json({
+      success: true,
+      data: formattedSessions,
+    });
+  } catch (error) {
+    console.error('Get sessions error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch sessions',
+    });
+  }
+});
+
+/**
+ * @route   DELETE /api/auth/me/sessions/:sessionId
+ * @desc    Revoke a specific session
+ * @access  Private (JWT required)
+ */
+router.delete('/me/sessions/:sessionId', protect, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    const session = await Session.findOne({
+      _id: sessionId,
+      userId: req.user._id,
+    });
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found',
+      });
+    }
+
+    // Mark session as inactive
+    session.isActive = false;
+    session.disconnectedAt = new Date();
+    await session.save();
+
+    res.json({
+      success: true,
+      message: 'Session revoked successfully',
+    });
+  } catch (error) {
+    console.error('Revoke session error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to revoke session',
     });
   }
 });

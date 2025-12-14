@@ -232,12 +232,18 @@ const AlertDashboard = () => {
                           {alert.status}
                         </span>
                         {/* Community Verified Badge */}
-                        {alert.metadata?.communityVerified && (
+                        {alert.metadata?.communityVerified && !alert.metadata?.adminVerified && (
                           <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 flex items-center gap-1">
                             👥 Community Verified
                           </span>
                         )}
-                        {alert.source?.type === 'report' && (
+                        {/* Admin Verified Badge */}
+                        {alert.metadata?.adminVerified && (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 flex items-center gap-1">
+                            🛡️ Admin Verified
+                          </span>
+                        )}
+                        {alert.source?.type === 'report' && alert.metadata?.communityVerified && (
                           <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                             📢 From Report
                           </span>

@@ -36,14 +36,14 @@ const statusBadge = {
   cancelled: { bg: 'bg-gray-100', text: 'text-gray-500', label: 'Cancelled' },
 };
 
-// Verification threshold (3+ confirmations = verified)
-const VERIFICATION_THRESHOLD = 3;
+// Verification threshold (4+ confirmations = community verified)
+const VERIFICATION_THRESHOLD = 4;
 // Maximum distance in meters to allow verification (2km)
 const MAX_VERIFICATION_DISTANCE = 2000;
 
 // Get marker color based on incident type and status
 // 🔴 Red = Unverified reports
-// 🟢 Green = Verified reports (3+ confirmations)
+// 🟢 Green = Verified reports (4+ confirmations or admin verified)
 // 🟠 Orange = Official alerts
 const getMarkerColor = (type, incident) => {
   if (type === 'alert') {
@@ -236,9 +236,14 @@ const IncidentMarker = ({ incident, type = 'report', onClick, onVerify, userLoca
                       {severity.label}
                     </span>
                   )}
-                  {type === 'report' && (
-                    <span className={`px-2 py-0.5 text-xs rounded-full ${isVerified ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                      {isVerified ? '✓ Verified' : '⚠️ Unverified'}
+                  {type === 'report' && isVerified && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-800 font-medium">
+                      ✓ Community Verified
+                    </span>
+                  )}
+                  {type === 'report' && !isVerified && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-yellow-100 text-yellow-800">
+                      ⚠️ Unverified
                     </span>
                   )}
                 </div>

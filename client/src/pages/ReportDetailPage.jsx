@@ -171,13 +171,23 @@ const ReportDetailPage = () => {
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-red-600 to-red-700 px-6 py-4">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <span className={`px-3 py-1 rounded-full text-sm font-medium ${getSeverityColor(report.severity)}`}>
               {report.severity?.toUpperCase()}
             </span>
             <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(report.status)}`}>
               {report.status}
             </span>
+            {report.adminVerified && (
+              <span className="px-3 py-1 rounded-full text-sm font-medium bg-green-200 text-green-800">
+                🛡️ Admin Verified
+              </span>
+            )}
+            {(report.communityVerified || (report.verificationStatus === 'verified' && !report.adminVerified)) && (
+              <span className="px-3 py-1 rounded-full text-sm font-medium bg-purple-200 text-purple-800">
+                👥 Community Verified {report.communityVerificationCount ? `(${report.communityVerificationCount} votes)` : ''}
+              </span>
+            )}
           </div>
           <h1 className="text-2xl font-bold text-white mt-3">{report.title}</h1>
         </div>

@@ -226,10 +226,20 @@ const UserDashboard = () => {
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusBadge(report.status)}`}>
                           {report.status}
                         </span>
+                        {report.adminVerified && (
+                          <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                            🛡️ Admin
+                          </span>
+                        )}
+                        {report.verificationStatus === 'verified' && !report.adminVerified && (
+                          <span className="px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                            👥 Verified
+                          </span>
+                        )}
                         <h3 className="font-medium text-gray-900">{report.title}</h3>
                       </div>
                       <p className="text-sm text-gray-500 mt-1">

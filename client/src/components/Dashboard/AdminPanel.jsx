@@ -58,11 +58,11 @@ const AdminPanel = () => {
       });
 
       // Fetch pending reports
-      const pendingRes = await reportsApi.getAll({ status: 'pending', limit: 10 });
+      const pendingRes = await reportsApi.getAll({ status: 'pending', limit: 10, includeAll: true });
       setPendingReports(pendingRes.data.data || []);
 
-      // Fetch recent alerts
-      const alertsRes = await alertsApi.getAll({ limit: 5, sort: '-createdAt' });
+      // Fetch recent alerts (include all for admin view)
+      const alertsRes = await alertsApi.getAll({ limit: 5, sort: '-createdAt', includeAll: true });
       setRecentAlerts(alertsRes.data.data || []);
 
       // Fetch users if super admin
@@ -83,7 +83,7 @@ const AdminPanel = () => {
 
   const fetchFilteredReports = async () => {
     try {
-      const params = { limit: 50 };
+      const params = { limit: 50, includeAll: true };
       if (reportFilters.status !== 'all') params.status = reportFilters.status;
       if (reportFilters.category !== 'all') params.category = reportFilters.category;
       if (reportFilters.startDate) params.startDate = reportFilters.startDate;
@@ -212,12 +212,20 @@ const AdminPanel = () => {
               Manage reports, alerts, and monitor activity
             </p>
           </div>
-          <div className="text-left md:text-right">
-            <p className="text-sm text-gray-400">Logged in as</p>
-            <p className="font-medium">{user?.name}</p>
-            <span className="inline-block px-2 py-0.5 bg-red-600 rounded text-xs mt-1">
-              {user?.role}
-            </span>
+          <div className="flex items-center gap-4">
+            <Link
+              to="/admin/manage"
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-medium transition-colors"
+            >
+              🛡️ Resolve Reports/Alerts
+            </Link>
+            <div className="text-left md:text-right">
+              <p className="text-sm text-gray-400">Logged in as</p>
+              <p className="font-medium">{user?.name}</p>
+              <span className="inline-block px-2 py-0.5 bg-red-600 rounded text-xs mt-1">
+                {user?.role}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -471,9 +479,16 @@ const AdminPanel = () => {
                           <span className="text-sm capitalize">{report.category?.replace('_', ' ')}</span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`text-xs px-2 py-1 rounded ${getStatusColor(report.status)}`}>
-                            {report.status}
-                          </span>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className={`text-xs px-2 py-1 rounded ${getStatusColor(report.status)}`}>
+                              {report.status}
+                            </span>
+                            {report.adminVerified && (
+                              <span className="text-xs px-2 py-1 rounded bg-green-100 text-green-800">
+                                🛡️ Admin
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-500">
                           {formatDate(report.createdAt)}

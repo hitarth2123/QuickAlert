@@ -96,9 +96,114 @@ router.post('/', optionalAuth, reportCreationLimiter, async (req, res) => {
     // Add reporter if authenticated
     if (req.user) {
       reportData.reporter = req.user._id;
+      
+      // If user is admin or super_admin, auto-verify the report
+      if (req.user.role === 'admin' || req.user.role === 'super_admin') {
+        reportData.verificationStatus = 'verified';
+        reportData.status = 'verified';
+        reportData.verifiedAt = new Date();
+        reportData.verifiedBy = req.user._id;
+        reportData.adminVerified = true;
+        reportData.adminVerifiedBy = req.user._id;
+      }
     }
 
     const report = await Report.create(reportData);
+
+    // If admin-created report (auto-verified), also create an alert
+    if (req.user && (req.user.role === 'admin' || req.user.role === 'super_admin')) {
+      try {
+        const categoryToType = {
+          accident: 'traffic',
+          fire: 'emergency',
+          flood: 'weather',
+          crime: 'crime',
+          medical: 'health',
+          infrastructure: 'infrastructure',
+          emergency: 'emergency',
+          natural_disaster: 'weather',
+          suspicious_activity: 'crime',
+          traffic: 'traffic',
+          weather: 'weather',
+          public_safety: 'community',
+          other: 'community',
+        };
+
+        const categoryToSeverity = {
+          accident: 'warning',
+          fire: 'critical',
+          flood: 'warning',
+          crime: 'warning',
+          medical: 'advisory',
+          infrastructure: 'advisory',
+          emergency: 'critical',
+          natural_disaster: 'critical',
+          suspicious_activity: 'warning',
+          traffic: 'advisory',
+          weather: 'advisory',
+          public_safety: 'advisory',
+          other: 'info',
+        };
+
+        const alert = new Alert({
+          title: `🛡️ ${report.title || `${report.category} Incident`}`,
+          description: `${report.description || 'Reported incident'}\n\n✅ **Verified by Admin**\nThis alert was created by an official administrator.`,
+          shortDescription: `Admin report: ${report.category} incident nearby`,
+          type: categoryToType[report.category] || 'community',
+          severity: report.severity === 'critical' ? 'critical' : (categoryToSeverity[report.category] || 'advisory'),
+          source: {
+            type: 'report',
+            reportId: report._id,
+            officialSource: 'Admin Report',
+          },
+          createdBy: req.user._id,
+          targetArea: {
+            type: 'Circle',
+            coordinates: report.location?.coordinates || [0, 0],
+            radius: 5,
+            address: report.location?.address,
+          },
+          effectiveFrom: new Date(),
+          effectiveUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          isActive: true,
+          status: 'active',
+          channels: {
+            push: true,
+            inApp: true,
+            email: false,
+            sms: false,
+          },
+          instructions: [
+            { text: 'Stay alert and aware of your surroundings', priority: 1 },
+            { text: 'Avoid the area if possible', priority: 2 },
+            { text: 'Report any additional information', priority: 3 },
+          ],
+          metadata: {
+            isAutomated: false,
+            source: 'admin_report',
+            reportId: report._id.toString(),
+            adminVerified: true,
+            verifiedBy: req.user._id.toString(),
+          },
+        });
+
+        await alert.save();
+        
+        // Update report with alert reference
+        report.alertId = alert._id;
+        await report.save();
+
+        console.log(`[Admin] Admin report ${report._id} created with alert ${alert._id}`);
+
+        // Emit real-time notification for the alert
+        const io = req.app.get('io');
+        if (io && io.emitVerifiedReport) {
+          io.emitVerifiedReport(report, alert);
+        }
+      } catch (alertError) {
+        console.error('Error creating alert for admin report:', alertError);
+      }
+    }
 
     // Emit socket event for real-time updates (geo-filtered to 10km)
     const io = req.app.get('io');
@@ -108,7 +213,9 @@ router.post('/', optionalAuth, reportCreationLimiter, async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Report submitted successfully',
+      message: req.user?.role === 'admin' || req.user?.role === 'super_admin' 
+        ? 'Report submitted and verified (Admin)' 
+        : 'Report submitted successfully',
       data: report,
     });
   } catch (error) {
@@ -146,13 +253,17 @@ router.get('/', searchLimiter, async (req, res) => {
       severity,
       status,
       reporter, // Filter by reporter ID (for "my reports")
+      includeAll, // Admin flag to include all reports (expired, rejected, etc.)
     } = req.query;
 
     // Build query
-    const query = {
-      isExpired: { $ne: true },
-      status: { $nin: ['rejected', 'duplicate'] },
-    };
+    const query = {};
+    
+    // Only apply default filters if not requesting all reports (for admin panel)
+    if (includeAll !== 'true') {
+      query.isExpired = { $ne: true };
+      query.status = { $nin: ['rejected', 'duplicate'] };
+    }
 
     // Reporter filter (for fetching user's own reports)
     if (reporter) {
@@ -280,10 +391,10 @@ router.get('/nearby', searchLimiter, async (req, res) => {
       }
     }
 
-    // Build query
+    // Build query - exclude resolved, rejected, and duplicate reports from map
     const query = {
       isExpired: { $ne: true },
-      status: { $nin: ['rejected', 'duplicate'] },
+      status: { $nin: ['rejected', 'duplicate', 'resolved'] },
     };
 
     // Category filter
@@ -521,6 +632,152 @@ router.post('/:id/verify', protect, async (req, res) => {
       console.log('Verify request - No user location available, allowing verification');
     }
 
+    // Check if user is admin/super_admin - they can immediately verify
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+
+    if (isAdmin && vote === 'confirm') {
+      // Admin confirmation - immediately verify the report
+      report.verificationStatus = 'verified';
+      report.status = 'verified';
+      report.verifiedAt = new Date();
+      report.verifiedBy = req.user._id;
+      report.adminVerified = true;
+      report.adminVerifiedBy = req.user._id;
+
+      // Also add admin's vote
+      const existingVoteIndex = report.votes.voters.findIndex(
+        (v) => v.user.toString() === req.user._id.toString()
+      );
+      if (existingVoteIndex === -1) {
+        report.votes.up++;
+        report.votes.voters.push({
+          user: req.user._id,
+          vote: 'up',
+          votedAt: new Date(),
+        });
+      }
+
+      await report.save();
+
+      // Create an alert for admin-verified report
+      try {
+        const categoryToType = {
+          accident: 'traffic',
+          fire: 'emergency',
+          flood: 'weather',
+          crime: 'crime',
+          medical: 'health',
+          infrastructure: 'infrastructure',
+          other: 'community',
+        };
+
+        const categoryToSeverity = {
+          accident: 'warning',
+          fire: 'critical',
+          flood: 'warning',
+          crime: 'warning',
+          medical: 'advisory',
+          infrastructure: 'advisory',
+          other: 'info',
+        };
+
+        const alert = new Alert({
+          title: `🛡️ ${report.title || `${report.category} Incident`}`,
+          description: `${report.description || 'Reported incident'}\n\n✅ **Verified by Admin**\nThis alert was verified by an official administrator.`,
+          shortDescription: `Admin verified: ${report.category} incident reported nearby`,
+          type: categoryToType[report.category] || 'community',
+          severity: report.severity === 'critical' ? 'critical' : (categoryToSeverity[report.category] || 'advisory'),
+          source: {
+            type: 'report',
+            reportId: report._id,
+            officialSource: 'Admin Verification',
+          },
+          createdBy: req.user._id,
+          targetArea: {
+            type: 'Circle',
+            coordinates: report.location?.coordinates || [0, 0],
+            radius: 5,
+            address: report.location?.address,
+          },
+          effectiveFrom: new Date(),
+          effectiveUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          isActive: true,
+          status: 'active',
+          channels: {
+            push: true,
+            inApp: true,
+            email: false,
+            sms: false,
+          },
+          instructions: [
+            { text: 'Stay alert and aware of your surroundings', priority: 1 },
+            { text: 'Avoid the area if possible', priority: 2 },
+            { text: 'Report any additional information', priority: 3 },
+          ],
+          metadata: {
+            isAutomated: false,
+            source: 'admin_verification',
+            reportId: report._id.toString(),
+            adminVerified: true,
+            verifiedBy: req.user._id.toString(),
+          },
+        });
+
+        await alert.save();
+        report.alertId = alert._id;
+        await report.save();
+
+        // Emit real-time notification
+        const io = req.app.get('io');
+        if (io && io.emitVerifiedReport) {
+          io.emitVerifiedReport(report, alert);
+        }
+
+        console.log(`[Admin] Report ${report._id} verified by admin ${req.user._id}, alert ${alert._id} created`);
+      } catch (alertError) {
+        console.error('Error creating alert for admin-verified report:', alertError);
+      }
+
+      return res.json({
+        success: true,
+        message: 'Report verified by admin',
+        data: {
+          report: {
+            _id: report._id,
+            votes: report.votes,
+            verificationStatus: report.verificationStatus,
+            adminVerified: report.adminVerified,
+          },
+        },
+      });
+    }
+
+    if (isAdmin && vote === 'deny') {
+      // Admin denial - immediately mark as false report
+      report.verificationStatus = 'false_report';
+      report.status = 'rejected';
+      report.verifiedAt = new Date();
+      report.verifiedBy = req.user._id;
+      report.adminVerified = true;
+      report.adminVerifiedBy = req.user._id;
+
+      await report.save();
+
+      return res.json({
+        success: true,
+        message: 'Report marked as false by admin',
+        data: {
+          report: {
+            _id: report._id,
+            votes: report.votes,
+            verificationStatus: report.verificationStatus,
+            adminVerified: report.adminVerified,
+          },
+        },
+      });
+    }
+
+    // Regular user voting logic
     // Check if user already voted
     const existingVoteIndex = report.votes.voters.findIndex(
       (v) => v.user.toString() === req.user._id.toString()
@@ -552,89 +809,120 @@ router.post('/:id/verify', protect, async (req, res) => {
       });
     }
 
-    // Auto-verify if threshold reached (≥3 confirms as per spec)
-    const confirmThreshold = 3;
-    if (report.votes.up >= confirmThreshold && report.verificationStatus === 'unverified') {
+    // Auto-verify if threshold reached (≥4 confirms for community verification)
+    const confirmThreshold = 4;
+    const shouldVerify = report.votes.up >= confirmThreshold && report.verificationStatus === 'unverified';
+    const shouldAddCommunityVerified = report.votes.up >= confirmThreshold && !report.communityVerified;
+    
+    if (shouldVerify) {
       report.verificationStatus = 'verified';
       report.status = 'verified';
       report.verifiedAt = new Date();
+    }
+    
+    // Set community verified flag when threshold is reached
+    if (shouldAddCommunityVerified) {
+      report.communityVerified = true;
+      report.communityVerifiedAt = new Date();
+      report.communityVerificationCount = report.votes.up;
 
-      // Create an alert from the verified report
+      // Update existing alert OR create new alert from the verified report
       try {
-        const categoryToType = {
-          accident: 'traffic',
-          fire: 'emergency',
-          flood: 'weather',
-          crime: 'crime',
-          medical: 'health',
-          infrastructure: 'infrastructure',
-          other: 'community',
-        };
+        // Check if report already has an alert (e.g., admin-created report)
+        if (report.alertId) {
+          // Update existing alert with community verified status
+          const existingAlert = await Alert.findById(report.alertId);
+          if (existingAlert) {
+            existingAlert.metadata = existingAlert.metadata || {};
+            existingAlert.metadata.communityVerified = true;
+            existingAlert.metadata.communityVerificationCount = report.votes.up;
+            existingAlert.metadata.communityVerifiedAt = new Date();
+            
+            // Update description to mention community verification
+            if (!existingAlert.description.includes('Community Voting')) {
+              existingAlert.description = existingAlert.description + `\n\n👥 **Also Verified by Community**\n${report.votes.up} community members have confirmed this incident.`;
+            }
+            
+            await existingAlert.save();
+            logger.info(`Existing alert ${existingAlert._id} updated with community verification`);
+          }
+        } else {
+          // Create new alert for community-verified report
+          const categoryToType = {
+            accident: 'traffic',
+            fire: 'emergency',
+            flood: 'weather',
+            crime: 'crime',
+            medical: 'health',
+            infrastructure: 'infrastructure',
+            other: 'community',
+          };
 
-        const categoryToSeverity = {
-          accident: 'warning',
-          fire: 'critical',
-          flood: 'warning',
-          crime: 'warning',
-          medical: 'advisory',
-          infrastructure: 'advisory',
-          other: 'info',
-        };
+          const categoryToSeverity = {
+            accident: 'warning',
+            fire: 'critical',
+            flood: 'warning',
+            crime: 'warning',
+            medical: 'advisory',
+            infrastructure: 'advisory',
+            other: 'info',
+          };
 
-        const alert = new Alert({
-          title: `⚠️ ${report.title || `${report.category} Incident`}`,
-          description: `${report.description || 'Community reported incident'}\n\n📢 **Verified by Community Voting**\nThis alert was automatically generated when ${report.votes.up} community members confirmed this incident report.`,
-          shortDescription: `Community verified: ${report.category} incident reported nearby`,
-          type: categoryToType[report.category] || 'community',
-          severity: categoryToSeverity[report.category] || 'advisory',
-          source: {
-            type: 'report',
-            reportId: report._id,
-            officialSource: 'Community Voting System',
-          },
-          createdBy: report.reporter || req.user._id,
-          targetArea: {
-            type: 'Circle',
-            coordinates: report.location?.coordinates || [0, 0],
-            radius: 5, // 5km radius for community alerts
-            address: report.locationDescription,
-          },
-          effectiveFrom: new Date(),
-          effectiveUntil: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-          isActive: true,
-          status: 'active',
-          channels: {
-            push: true,
-            inApp: true,
-            email: false,
-            sms: false,
-          },
-          instructions: [
-            { text: 'Stay alert and aware of your surroundings', priority: 1 },
-            { text: 'Avoid the area if possible', priority: 2 },
-            { text: 'Report any additional information', priority: 3 },
-          ],
-          metadata: {
-            isAutomated: true,
-            source: 'community_verification',
-            reportId: report._id.toString(),
-            verificationCount: report.votes.up,
-            communityVerified: true,
-          },
-        });
+          const alert = new Alert({
+            title: `⚠️ ${report.title || `${report.category} Incident`}`,
+            description: `${report.description || 'Community reported incident'}\n\n📢 **Verified by Community Voting**\nThis alert was automatically generated when ${report.votes.up} community members confirmed this incident report.`,
+            shortDescription: `Community verified: ${report.category} incident reported nearby`,
+            type: categoryToType[report.category] || 'community',
+            severity: categoryToSeverity[report.category] || 'advisory',
+            source: {
+              type: 'report',
+              reportId: report._id,
+              officialSource: 'Community Voting System',
+            },
+            createdBy: report.reporter || req.user._id,
+            targetArea: {
+              type: 'Circle',
+              coordinates: report.location?.coordinates || [0, 0],
+              radius: 5, // 5km radius for community alerts
+              address: report.locationDescription,
+            },
+            effectiveFrom: new Date(),
+            effectiveUntil: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+            isActive: true,
+            status: 'active',
+            channels: {
+              push: true,
+              inApp: true,
+              email: false,
+              sms: false,
+            },
+            instructions: [
+              { text: 'Stay alert and aware of your surroundings', priority: 1 },
+              { text: 'Avoid the area if possible', priority: 2 },
+              { text: 'Report any additional information', priority: 3 },
+            ],
+            metadata: {
+              isAutomated: true,
+              source: 'community_verification',
+              reportId: report._id.toString(),
+              verificationCount: report.votes.up,
+              communityVerified: true,
+            },
+          });
 
-        await alert.save();
-        report.alertId = alert._id; // Link the alert to the report
-        
-        logger.info(`Alert created from verified report: ${alert._id}`);
+          await alert.save();
+          report.alertId = alert._id; // Link the alert to the report
+          
+          logger.info(`Alert created from verified report: ${alert._id}`);
 
-        // Emit the new alert via socket
-        const io = req.app.get('io');
-        if (io && io.emitOfficialAlert) {
-          io.emitOfficialAlert(alert);
+          // Emit the new alert via socket
+          const io = req.app.get('io');
+          if (io && io.emitOfficialAlert) {
+            io.emitOfficialAlert(alert);
+          }
         }
       } catch (alertError) {
-        console.error('Error creating alert from verified report:', alertError);
+        console.error('Error creating/updating alert from verified report:', alertError);
         // Don't fail the vote if alert creation fails
       }
 
@@ -674,21 +962,22 @@ router.post('/:id/verify', protect, async (req, res) => {
 
 /**
  * @route   PATCH /api/reports/:id/moderate
- * @desc    Moderate report (approve/reject/flag)
- * @access  Private (admin role required)
+ * @desc    Moderate report (approve/reject/flag/resolve/escalate/in_progress)
+ * @access  Private (admin/responder role required)
  */
 router.patch(
   '/:id/moderate',
   protect,
-  authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN, ROLES.RESPONDER),
   async (req, res) => {
     try {
-      const { action, reason } = req.body; // action: 'approve', 'reject', 'flag'
+      const { action, reason } = req.body;
 
-      if (!['approve', 'reject', 'flag'].includes(action)) {
+      const validActions = ['approve', 'reject', 'flag', 'resolve', 'escalate', 'in_progress'];
+      if (!validActions.includes(action)) {
         return res.status(400).json({
           success: false,
-          message: 'Action must be "approve", "reject", or "flag"',
+          message: `Action must be one of: ${validActions.join(', ')}`,
         });
       }
 
@@ -708,16 +997,31 @@ router.patch(
           report.verificationStatus = 'verified';
           report.verifiedBy = req.user._id;
           report.verifiedAt = new Date();
+          report.adminVerified = true;
+          report.adminVerifiedBy = req.user._id;
           break;
         case 'reject':
           report.status = 'rejected';
           report.verificationStatus = 'false_report';
           report.verifiedBy = req.user._id;
           report.verifiedAt = new Date();
+          report.adminVerified = true;
+          report.adminVerifiedBy = req.user._id;
           break;
         case 'flag':
-          report.status = 'pending';
+          report.status = 'flagged';
           report.verificationStatus = 'pending_verification';
+          break;
+        case 'resolve':
+          report.status = 'resolved';
+          report.resolvedBy = req.user._id;
+          report.resolvedAt = new Date();
+          break;
+        case 'escalate':
+          report.status = 'escalated';
+          break;
+        case 'in_progress':
+          report.status = 'in_progress';
           break;
       }
 
@@ -726,6 +1030,99 @@ router.patch(
       }
 
       await report.save();
+
+      // If admin approved the report, create an alert
+      if (action === 'approve' && !report.alertId) {
+        try {
+          const categoryToType = {
+            accident: 'traffic',
+            fire: 'emergency',
+            flood: 'weather',
+            crime: 'crime',
+            medical: 'health',
+            infrastructure: 'infrastructure',
+            emergency: 'emergency',
+            natural_disaster: 'weather',
+            suspicious_activity: 'crime',
+            traffic: 'traffic',
+            weather: 'weather',
+            public_safety: 'community',
+            other: 'community',
+          };
+
+          const categoryToSeverity = {
+            accident: 'warning',
+            fire: 'critical',
+            flood: 'warning',
+            crime: 'warning',
+            medical: 'advisory',
+            infrastructure: 'advisory',
+            emergency: 'critical',
+            natural_disaster: 'critical',
+            suspicious_activity: 'warning',
+            traffic: 'advisory',
+            weather: 'advisory',
+            public_safety: 'advisory',
+            other: 'info',
+          };
+
+          const alert = new Alert({
+            title: `🛡️ ${report.title || `${report.category} Incident`}`,
+            description: `${report.description || 'Reported incident'}\n\n✅ **Verified by Admin**\nThis report was approved by an official administrator.`,
+            shortDescription: `Admin approved: ${report.category} incident reported nearby`,
+            type: categoryToType[report.category] || 'community',
+            severity: report.severity === 'critical' ? 'critical' : (categoryToSeverity[report.category] || 'advisory'),
+            source: {
+              type: 'report',
+              reportId: report._id,
+              officialSource: 'Admin Moderation',
+            },
+            createdBy: req.user._id,
+            targetArea: {
+              type: 'Circle',
+              coordinates: report.location?.coordinates || [0, 0],
+              radius: 5,
+              address: report.location?.address,
+            },
+            effectiveFrom: new Date(),
+            effectiveUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            isActive: true,
+            status: 'active',
+            channels: {
+              push: true,
+              inApp: true,
+              email: false,
+              sms: false,
+            },
+            instructions: [
+              { text: 'Stay alert and aware of your surroundings', priority: 1 },
+              { text: 'Avoid the area if possible', priority: 2 },
+              { text: 'Report any additional information', priority: 3 },
+            ],
+            metadata: {
+              isAutomated: false,
+              source: 'admin_moderation',
+              reportId: report._id.toString(),
+              adminVerified: true,
+              verifiedBy: req.user._id.toString(),
+            },
+          });
+
+          await alert.save();
+          report.alertId = alert._id;
+          await report.save();
+
+          // Emit the alert notification
+          const io = req.app.get('io');
+          if (io && io.emitOfficialAlert) {
+            io.emitOfficialAlert(alert);
+          }
+
+          console.log(`[Admin Moderation] Report ${report._id} approved, alert ${alert._id} created`);
+        } catch (alertError) {
+          console.error('Error creating alert for approved report:', alertError);
+        }
+      }
 
       // Emit socket event (geo-filtered)
       const io = req.app.get('io');

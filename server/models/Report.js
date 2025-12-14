@@ -133,6 +133,25 @@ const reportSchema = new mongoose.Schema(
     },
     verifiedAt: Date,
     verificationNotes: String,
+    // Admin verification flag
+    adminVerified: {
+      type: Boolean,
+      default: false,
+    },
+    adminVerifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    // Community verification flag (when 4+ community members verify)
+    communityVerified: {
+      type: Boolean,
+      default: false,
+    },
+    communityVerifiedAt: Date,
+    communityVerificationCount: {
+      type: Number,
+      default: 0,
+    },
     // Link to alert created from this report (when community verified)
     alertId: {
       type: mongoose.Schema.Types.ObjectId,

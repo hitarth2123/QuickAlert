@@ -143,6 +143,11 @@ class SocketService {
     return this.on('reportVerified', callback);
   }
 
+  // Subscribe to report moderation (resolve, reject, etc.)
+  onReportModerated(callback) {
+    return this.on('reportModerated', callback);
+  }
+
   // Subscribe to alert updates
   onAlertUpdated(callback) {
     return this.on('alertUpdated', callback);

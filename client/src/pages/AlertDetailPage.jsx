@@ -107,12 +107,17 @@ const AlertDetailPage = () => {
                 <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusBadge(alert.status)}`}>
                   {alert.status}
                 </span>
-                {alert.metadata?.communityVerified && (
+                {alert.metadata?.communityVerified && !alert.metadata?.adminVerified && (
                   <span className="px-3 py-1 rounded-full text-sm font-medium bg-purple-200 text-purple-800">
                     👥 Verified by Community Voting
                   </span>
                 )}
-                {alert.source?.type === 'report' && (
+                {alert.metadata?.adminVerified && (
+                  <span className="px-3 py-1 rounded-full text-sm font-medium bg-green-200 text-green-800">
+                    🛡️ Verified by Admin
+                  </span>
+                )}
+                {alert.source?.type === 'report' && alert.metadata?.communityVerified && (
                   <span className="px-3 py-1 rounded-full text-sm font-medium bg-blue-200 text-blue-800">
                     📢 From Community Report
                   </span>
@@ -133,8 +138,27 @@ const AlertDetailPage = () => {
             <p className="text-gray-700 whitespace-pre-wrap">{alert.description}</p>
           </div>
 
+          {/* Admin Verification Info */}
+          {alert.metadata?.adminVerified && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <h3 className="font-semibold text-green-800 mb-2">🛡️ Admin Verified Alert</h3>
+              <p className="text-green-700 text-sm">
+                This alert was verified by an official administrator. Admin-verified alerts are prioritized 
+                and confirmed to be accurate by our team.
+              </p>
+              {alert.source?.reportId && (
+                <Link
+                  to={`/reports/${alert.source.reportId}`}
+                  className="inline-flex items-center mt-3 text-green-600 hover:text-green-800 text-sm font-medium"
+                >
+                  View Original Report →
+                </Link>
+              )}
+            </div>
+          )}
+
           {/* Community Verification Info */}
-          {alert.metadata?.communityVerified && (
+          {alert.metadata?.communityVerified && !alert.metadata?.adminVerified && (
             <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
               <h3 className="font-semibold text-purple-800 mb-2">📢 Community Verified Alert</h3>
               <p className="text-purple-700 text-sm">

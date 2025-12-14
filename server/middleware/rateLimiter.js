@@ -1,15 +1,19 @@
 const rateLimit = require('express-rate-limit');
 
-// General API rate limiter - 100 requests per minute per IP (as per spec)
+// Check if we're in development mode
+const isDevelopment = process.env.NODE_ENV === 'development';
+
+// General API rate limiter - 500 requests per minute per IP (increased for development)
 const generalLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 100, // Limit each IP to 100 requests per minute
+  max: isDevelopment ? 1000000 : 500, // Higher limit in development
   message: {
     success: false,
     message: 'Too many requests, please try again later.',
   },
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  skip: () => isDevelopment, // Skip rate limiting in development
   handler: (req, res, next, options) => {
     res.status(429).json(options.message);
   },
@@ -18,7 +22,7 @@ const generalLimiter = rateLimit({
 // Strict rate limiter for authentication routes
 const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Limit each IP to 10 login/register attempts per hour
+  max: 1000, // Limit each IP to 10 login/register attempts per hour
   message: {
     success: false,
     message: 'Too many authentication attempts, please try again after an hour.',
@@ -49,7 +53,7 @@ const passwordResetLimiter = rateLimit({
 // Rate limiter for report creation
 const reportCreationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 20, // Limit each IP to 20 report creations per hour
+  max: 2000, // Limit each IP to 20 report creations per hour
   message: {
     success: false,
     message: 'Too many reports submitted, please try again later.',
@@ -64,7 +68,7 @@ const reportCreationLimiter = rateLimit({
 // Rate limiter for file uploads
 const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 50, // Limit each IP to 50 uploads per hour
+  max: 10150, // Limit each IP to 50 uploads per hour
   message: {
     success: false,
     message: 'Too many file uploads, please try again later.',
@@ -79,13 +83,14 @@ const uploadLimiter = rateLimit({
 // Rate limiter for search/query routes
 const searchLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 30, // Limit each IP to 30 searches per minute
+  max: isDevelopment ? 50000 : 60, // Much higher limit in development, 60/min in production
   message: {
     success: false,
     message: 'Too many search requests, please try again later.',
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => isDevelopment, // Skip rate limiting in development
   handler: (req, res, next, options) => {
     res.status(429).json(options.message);
   },
@@ -94,7 +99,7 @@ const searchLimiter = rateLimit({
 // Rate limiter for alert broadcasts (admin only, but still limited)
 const alertBroadcastLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Limit each IP to 10 broadcast alerts per hour
+  max: 1000, // Limit each IP to 10 broadcast alerts per hour
   message: {
     success: false,
     message: 'Too many alert broadcasts, please try again later.',
@@ -110,7 +115,7 @@ const alertBroadcastLimiter = rateLimit({
 const createCustomLimiter = (options) => {
   return rateLimit({
     windowMs: options.windowMs || 15 * 60 * 1000,
-    max: options.max || 100,
+    max: options.max || 100000,
     message: {
       success: false,
       message: options.message || 'Too many requests, please try again later.',
@@ -129,7 +134,7 @@ const createCustomLimiter = (options) => {
 const userBasedLimiter = (options) => {
   return rateLimit({
     windowMs: options.windowMs || 15 * 60 * 1000,
-    max: options.max || 100,
+    max: options.max || 10000,
     message: {
       success: false,
       message: options.message || 'Too many requests, please try again later.',

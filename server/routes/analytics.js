@@ -268,6 +268,103 @@ router.get(
 );
 
 /**
+ * @route   GET /api/analytics/alerts-stats
+ * @desc    Get alert statistics
+ * @access  Private (admin role required)
+ */
+router.get(
+  '/alerts-stats',
+  protect,
+  authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+
+      // Build date filter
+      const dateFilter = {};
+      if (startDate) {
+        dateFilter.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        dateFilter.$lte = new Date(endDate);
+      }
+
+      const matchQuery = {};
+      if (Object.keys(dateFilter).length > 0) {
+        matchQuery.createdAt = dateFilter;
+      }
+
+      // Get comprehensive statistics
+      const [
+        totalAlerts,
+        alertsByStatus,
+        alertsByType,
+        alertsBySeverity,
+        activeAlerts,
+        alertsLast24h,
+      ] = await Promise.all([
+        // Total alerts
+        Alert.countDocuments(matchQuery),
+
+        // Alerts by status
+        Alert.aggregate([
+          { $match: matchQuery },
+          { $group: { _id: '$status', count: { $sum: 1 } } },
+        ]),
+
+        // Alerts by type
+        Alert.aggregate([
+          { $match: matchQuery },
+          { $group: { _id: '$type', count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+        ]),
+
+        // Alerts by severity
+        Alert.aggregate([
+          { $match: matchQuery },
+          { $group: { _id: '$severity', count: { $sum: 1 } } },
+        ]),
+
+        // Active alerts count
+        Alert.countDocuments({ ...matchQuery, isActive: true, status: 'active' }),
+
+        // Alerts in last 24 hours
+        Alert.countDocuments({
+          createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        }),
+      ]);
+
+      res.json({
+        success: true,
+        data: {
+          total: totalAlerts,
+          active: activeAlerts,
+          last24h: alertsLast24h,
+          byStatus: alertsByStatus.reduce((acc, item) => {
+            acc[item._id || 'unknown'] = item.count;
+            return acc;
+          }, {}),
+          byType: alertsByType.reduce((acc, item) => {
+            acc[item._id || 'unknown'] = item.count;
+            return acc;
+          }, {}),
+          bySeverity: alertsBySeverity.reduce((acc, item) => {
+            acc[item._id || 'unknown'] = item.count;
+            return acc;
+          }, {}),
+        },
+      });
+    } catch (error) {
+      console.error('Alerts stats error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error',
+      });
+    }
+  }
+);
+
+/**
  * @route   GET /api/analytics/heatmap
  * @desc    Get user density data for heatmap
  * @access  Private (alert/admin role required)

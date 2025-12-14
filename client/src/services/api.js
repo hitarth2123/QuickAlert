@@ -159,8 +159,25 @@ export const reportsApi = {
   getNearby: (lat, lng, radius = 5000) =>
     api.get('/reports/nearby', { params: { lat, lng, radius } }),
   verify: (id, data) => api.post(`/reports/${id}/verify`, data),
-  moderate: (id, status, reason) =>
-    api.put(`/reports/${id}/moderate`, { status, reason }),
+  moderate: (id, status, reason) => {
+    // Map status to action for backend compatibility
+    const actionMap = {
+      'verified': 'approve',
+      'rejected': 'reject',
+      'flagged': 'flag',
+      'resolved': 'resolve',
+      'escalated': 'escalate',
+      'in_progress': 'in_progress',
+      // Direct mappings
+      'approve': 'approve',
+      'reject': 'reject',
+      'flag': 'flag',
+      'resolve': 'resolve',
+      'escalate': 'escalate',
+    };
+    const action = actionMap[status] || status;
+    return api.patch(`/reports/${id}/moderate`, { action, reason });
+  },
   getCategories: () => api.get('/reports/categories/list'),
 };
 
@@ -180,9 +197,9 @@ export const alertsApi = {
 // Analytics API
 export const analyticsApi = {
   getPopulation: (params) => api.get('/analytics/population', { params }),
-  getReportStats: (params) => api.get('/analytics/reports', { params }),
+  getReportStats: (params) => api.get('/analytics/reports-stats', { params }),
   getReportHeatmap: (params) => api.get('/analytics/reports/heatmap', { params }),
-  getAlertStats: (params) => api.get('/analytics/alerts', { params }),
+  getAlertStats: (params) => api.get('/analytics/alerts-stats', { params }),
   getAlertHeatmap: (params) => api.get('/analytics/alerts/heatmap', { params }),
   getHeatmap: (params) => api.get('/analytics/heatmap', { params }),
 };

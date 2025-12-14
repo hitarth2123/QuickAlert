@@ -152,19 +152,45 @@ const MapPage = () => {
       setReports((prev) =>
         prev.map((r) =>
           r._id === reportId
-            ? { ...r, verificationCount, status: status || r.status }
+            ? { ...r, verificationCount, status: status || r.status, votes: { ...r.votes, up: verificationCount } }
             : r
         )
       );
+    });
+
+    // Subscribe to report moderation updates - remove resolved/rejected reports from map
+    const unsubscribeModerated = socketService.on('reportModerated', ({ reportId, action, newStatus }) => {
+      console.log('[MapPage] Report moderated:', reportId, action, newStatus);
+      // Remove resolved, rejected reports from map view
+      if (['resolved', 'rejected'].includes(newStatus) || ['resolve', 'reject'].includes(action)) {
+        setReports((prev) => prev.filter((r) => r._id !== reportId));
+        notify.info('A report has been resolved and removed from the map');
+      }
+    });
+
+    // Subscribe to alert resolution/cancellation - remove from map
+    const unsubscribeAlertResolved = socketService.onAlertResolved(({ alertId }) => {
+      console.log('[MapPage] Alert resolved:', alertId);
+      setAlerts((prev) => prev.filter((a) => a._id !== alertId));
+      notify.info('An alert has been resolved and removed from the map');
+    });
+
+    const unsubscribeAlertCancelled = socketService.onAlertCancelled(({ alertId }) => {
+      console.log('[MapPage] Alert cancelled:', alertId);
+      setAlerts((prev) => prev.filter((a) => a._id !== alertId));
+      notify.info('An alert has been cancelled and removed from the map');
     });
 
     return () => {
       unsubscribeReport();
       unsubscribeAlert();
       unsubscribeVerified();
+      unsubscribeModerated();
+      unsubscribeAlertResolved();
+      unsubscribeAlertCancelled();
       socketService.leaveLocation();
     };
-  }, [userLocation]);
+  }, [userLocation, notificationPermission]);
 
   // Handle report verification
   const handleVerifyReport = useCallback(async (reportId, vote) => {

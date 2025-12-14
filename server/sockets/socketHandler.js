@@ -113,7 +113,7 @@ const socketHandler = (io) => {
     const staleThreshold = 60 * 60 * 1000; // 1 hour
     const updateThreshold = 5 * 60 * 1000; // 5 minutes
     
-    activeConnections.forEach(async (conn, socketId) => {
+    activeConnections.forEach((conn, socketId) => {
       const timeSinceLastPing = now - conn.lastPing;
       
       // Remove stale connections (inactive > 1 hour)
@@ -122,16 +122,15 @@ const socketHandler = (io) => {
         if (socket) {
           socket.disconnect(true);
         }
-        cleanupConnection(socketId);
+        cleanupConnection(socketId, io);
         logger.socket('cleanup', socketId, 'Stale connection removed');
       }
-      // Update lastSeen every 5 minutes
+      // Update lastSeen every 5 minutes (non-blocking)
       else if (conn.userId && timeSinceLastPing < updateThreshold) {
-        try {
-          await User.findByIdAndUpdate(conn.userId, { lastSeen: new Date() });
-        } catch (error) {
-          logger.error('Error updating lastSeen', error);
-        }
+        User.findByIdAndUpdate(conn.userId, { lastSeen: new Date() })
+          .catch((error) => {
+            logger.debug('Error updating lastSeen:', error.message);
+          });
       }
     });
   }, 5 * 60 * 1000); // Run every 5 minutes
@@ -200,7 +199,7 @@ const socketHandler = (io) => {
      * @desc User opens map, broadcasts location
      * @payload {lat, lng} or {userId, location: {lat, lng}}
      */
-    socket.on('joinLocation', async (data) => {
+    socket.on('joinLocation', (data) => {
       try {
         // Support both formats: { lat, lng } and { location: { lat, lng } }
         const lat = data.lat || data.location?.lat;
@@ -252,16 +251,7 @@ const socketHandler = (io) => {
           count: zoneCounts.get(newZoneId),
         });
 
-        // Update user's location in database
-        if (socket.userId) {
-          await User.findByIdAndUpdate(socket.userId, {
-            'location.coordinates': [lng, lat],
-            lastSeen: new Date(),
-          });
-          // Note: Session tracking is done in-memory via activeConnections
-          // No need to create Session documents for real-time location tracking
-        }
-
+        // Emit success immediately - don't wait for DB
         socket.emit('joinedLocation', {
           success: true,
           zoneId: newZoneId,
@@ -269,6 +259,17 @@ const socketHandler = (io) => {
         });
 
         console.log(`[Socket] ${socket.id} joined location zone: ${newZoneId}`);
+
+        // Update user's location in database (non-blocking)
+        if (socket.userId) {
+          User.findByIdAndUpdate(socket.userId, {
+            'location.coordinates': [lng, lat],
+            lastSeen: new Date(),
+          }).catch((dbError) => {
+            // Log but don't block - in-memory tracking is sufficient
+            logger.debug('[Socket] DB location update skipped:', dbError.message);
+          });
+        }
       } catch (error) {
         console.error('[Socket] joinLocation error:', error);
         socket.emit('error', { message: 'Failed to join location' });
@@ -280,7 +281,7 @@ const socketHandler = (io) => {
      * @desc User closes app
      * @payload {userId}
      */
-    socket.on('leaveLocation', async (data) => {
+    socket.on('leaveLocation', (data) => {
       try {
         const conn = activeConnections.get(socket.id);
         
@@ -306,21 +307,19 @@ const socketHandler = (io) => {
           });
         }
 
-        // Update session (non-blocking, errors won't prevent leaving)
-        if (socket.userId) {
-          try {
-            await Session.findOneAndUpdate(
-              { socketId: socket.id },
-              { isActive: false, disconnectedAt: new Date() }
-            );
-          } catch (sessionError) {
-            // Ignore session errors, in-memory tracking is sufficient
-            console.debug('[Socket] Session update skipped:', sessionError.message);
-          }
-        }
-
         socket.emit('leftLocation', { success: true });
         console.log(`[Socket] ${socket.id} left location`);
+
+        // Update session in database (non-blocking)
+        if (socket.userId) {
+          Session.findOneAndUpdate(
+            { socketId: socket.id },
+            { isActive: false, disconnectedAt: new Date() }
+          ).catch((sessionError) => {
+            // Ignore session errors, in-memory tracking is sufficient
+            logger.debug('[Socket] Session update skipped:', sessionError.message);
+          });
+        }
       } catch (error) {
         console.error('[Socket] leaveLocation error:', error);
       }
@@ -331,7 +330,7 @@ const socketHandler = (io) => {
      * @desc Alert role requests population count in polygon
      * @payload {polygon: [[lng, lat], ...]}
      */
-    socket.on('requestPopulation', async (data) => {
+    socket.on('requestPopulation', (data) => {
       try {
         // Check authorization (alert role only)
         if (!socket.user || !['alert', 'admin', 'super_admin', 'responder'].includes(socket.user.role)) {
@@ -346,33 +345,42 @@ const socketHandler = (io) => {
           return;
         }
 
-        // Count from in-memory connections (real-time)
+        // Count from in-memory connections (real-time) - this is fast and non-blocking
         const realtimeCount = countUsersInPolygon(polygon);
 
-        // Count from database sessions (more accurate)
-        let dbCount = 0;
-        try {
-          dbCount = await Session.countDocuments({
-            isActive: true,
-            'location.coordinates': {
-              $geoWithin: {
-                $polygon: polygon,
-              },
-            },
-          });
-        } catch (dbError) {
-          console.error('Database population query error:', dbError);
-        }
-
+        // Emit the realtime count immediately
         socket.emit('populationCount', {
           polygon,
           realtimeCount,
-          dbCount,
-          estimatedCount: Math.max(realtimeCount, dbCount),
+          dbCount: 0, // We'll skip DB query to avoid blocking
+          estimatedCount: realtimeCount,
           timestamp: new Date(),
         });
 
-        console.log(`[Socket] Population request from ${socket.id}: ${Math.max(realtimeCount, dbCount)} users`);
+        console.log(`[Socket] Population request from ${socket.id}: ${realtimeCount} users`);
+
+        // Optionally query DB in background for more accurate count (non-blocking)
+        Session.countDocuments({
+          isActive: true,
+          'location.coordinates': {
+            $geoWithin: {
+              $polygon: polygon,
+            },
+          },
+        }).then((dbCount) => {
+          // Send updated count if DB query succeeds and differs
+          if (dbCount > realtimeCount) {
+            socket.emit('populationCount', {
+              polygon,
+              realtimeCount,
+              dbCount,
+              estimatedCount: Math.max(realtimeCount, dbCount),
+              timestamp: new Date(),
+            });
+          }
+        }).catch((dbError) => {
+          logger.debug('[Socket] DB population query skipped:', dbError.message);
+        });
       } catch (error) {
         console.error('[Socket] requestPopulation error:', error);
         socket.emit('error', { message: 'Failed to get population count' });
@@ -425,7 +433,7 @@ const socketHandler = (io) => {
     /**
      * @event emergencySOS - Emergency help request
      */
-    socket.on('emergencySOS', async (data) => {
+    socket.on('emergencySOS', (data) => {
       if (socket.userId) {
         const { lat, lng, message } = data;
         
@@ -450,9 +458,9 @@ const socketHandler = (io) => {
     /**
      * Handle disconnection
      */
-    socket.on('disconnect', async (reason) => {
+    socket.on('disconnect', (reason) => {
       console.log(`[Socket] Disconnected: ${socket.id}, reason: ${reason}`);
-      await cleanupConnection(socket.id);
+      cleanupConnection(socket.id, io);
     });
 
     socket.on('error', (error) => {
@@ -461,9 +469,9 @@ const socketHandler = (io) => {
   });
 
   /**
-   * Cleanup connection data
+   * Cleanup connection data (non-blocking)
    */
-  async function cleanupConnection(socketId) {
+  function cleanupConnection(socketId, ioInstance) {
     const conn = activeConnections.get(socketId);
     
     if (conn) {
@@ -472,7 +480,7 @@ const socketHandler = (io) => {
         const zoneId = getZoneId(conn.location.lat, conn.location.lng);
         zoneCounts.set(zoneId, Math.max(0, (zoneCounts.get(zoneId) || 1) - 1));
         
-        io.to(zoneId).emit('userCountUpdate', {
+        ioInstance.to(zoneId).emit('userCountUpdate', {
           zoneId,
           count: zoneCounts.get(zoneId),
         });
@@ -486,16 +494,14 @@ const socketHandler = (io) => {
         }
       }
 
-      // Update session in database
+      // Update session in database (non-blocking)
       if (conn.userId) {
-        try {
-          await Session.findOneAndUpdate(
-            { socketId },
-            { isActive: false, disconnectedAt: new Date() }
-          );
-        } catch (error) {
-          console.error('Session cleanup error:', error);
-        }
+        Session.findOneAndUpdate(
+          { socketId },
+          { isActive: false, disconnectedAt: new Date() }
+        ).catch((error) => {
+          logger.debug('Session cleanup skipped:', error.message);
+        });
       }
 
       activeConnections.delete(socketId);
@@ -578,7 +584,7 @@ const socketHandler = (io) => {
    * @desc Push notification to affected users
    * @trigger Alert role creates alert
    */
-  io.emitOfficialAlert = async (alert) => {
+  io.emitOfficialAlert = (alert) => {
     const payload = {
       alertId: alert._id,
       message: alert.message || alert.description,

@@ -172,17 +172,21 @@ router.get('/', searchLimiter, async (req, res) => {
       limit = 20,
       type,
       severity,
+      includeAll, // Admin flag to include all alerts (inactive, expired, etc.)
     } = req.query;
 
-    // Build query for active alerts
-    const query = {
-      isActive: true,
-      status: 'active',
-      $or: [
+    // Build query
+    const query = {};
+    
+    // Only apply active filters if not requesting all alerts (for admin panel)
+    if (includeAll !== 'true') {
+      query.isActive = true;
+      query.status = 'active';
+      query.$or = [
         { effectiveUntil: { $exists: false } },
         { effectiveUntil: { $gt: new Date() } },
-      ],
-    };
+      ];
+    }
 
     // Type filter
     if (type) {
@@ -276,10 +280,10 @@ router.get('/nearby', searchLimiter, async (req, res) => {
       });
     }
 
-    // Build query for active alerts
+    // Build query for active alerts - exclude resolved and cancelled
     const query = {
       isActive: true,
-      status: 'active',
+      status: { $in: ['active'] }, // Only show active alerts, not resolved or cancelled
       $or: [
         { effectiveUntil: { $exists: false } },
         { effectiveUntil: { $gt: new Date() } },
@@ -396,6 +400,111 @@ router.get('/:id', async (req, res) => {
     });
   }
 });
+
+/**
+ * @route   PUT /api/alerts/:id
+ * @desc    Update alert (status, resolve, expire, etc.)
+ * @access  Private (admin/responder role required)
+ */
+router.put(
+  '/:id',
+  protect,
+  authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN, ROLES.RESPONDER),
+  async (req, res) => {
+    try {
+      const { status, isActive, title, description, severity, effectiveUntil } = req.body;
+
+      const alert = await Alert.findById(req.params.id);
+
+      if (!alert) {
+        return res.status(404).json({
+          success: false,
+          message: 'Alert not found',
+        });
+      }
+
+      // Update allowed fields
+      if (status) {
+        alert.status = status;
+        
+        // If resolving/expiring/cancelling, set isActive to false
+        if (['resolved', 'expired', 'cancelled'].includes(status)) {
+          alert.isActive = false;
+          alert.resolvedAt = new Date();
+          alert.resolvedBy = req.user._id;
+        }
+        
+        // If reactivating, set isActive to true
+        if (status === 'active') {
+          alert.isActive = true;
+          alert.resolvedAt = undefined;
+          alert.resolvedBy = undefined;
+        }
+      }
+      
+      if (isActive !== undefined) {
+        alert.isActive = isActive;
+      }
+      
+      if (title) alert.title = title;
+      if (description) alert.description = description;
+      if (severity) alert.severity = severity;
+      if (effectiveUntil) alert.effectiveUntil = new Date(effectiveUntil);
+
+      await alert.save();
+
+      // If alert resolved/cancelled, also update related report if exists
+      if (['resolved', 'expired', 'cancelled'].includes(status) && alert.source?.reportId) {
+        try {
+          const Report = require('../models/Report');
+          await Report.findByIdAndUpdate(alert.source.reportId, {
+            status: status === 'cancelled' ? 'rejected' : 'resolved',
+          });
+          
+          // Also emit reportModerated event so maps update
+          if (io) {
+            io.emitReportModerated && io.emitReportModerated(
+              { _id: alert.source.reportId, status: status === 'cancelled' ? 'rejected' : 'resolved' },
+              status === 'cancelled' ? 'reject' : 'resolve',
+              req.user._id
+            );
+          }
+        } catch (err) {
+          console.log('Could not update related report:', err.message);
+        }
+      }
+
+      // Emit socket events
+      const io = req.app.get('io');
+      if (io) {
+        io.emit('alertUpdated', alert);
+        
+        // Emit specific events for resolved/cancelled alerts so maps can remove them
+        if (status === 'resolved') {
+          io.emit('alertResolved', { alertId: alert._id, alert });
+          console.log(`[Socket] alertResolved emitted for alert: ${alert._id}`);
+        } else if (status === 'cancelled') {
+          io.emit('alertCancelled', { alertId: alert._id, reason: 'Alert cancelled by admin', alert });
+          console.log(`[Socket] alertCancelled emitted for alert: ${alert._id}`);
+        }
+      }
+
+      console.log(`[Admin] Alert ${alert._id} updated to status: ${status} by ${req.user._id}`);
+
+      res.json({
+        success: true,
+        message: `Alert ${status || 'updated'} successfully`,
+        data: alert,
+      });
+    } catch (error) {
+      console.error('Update alert error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error',
+      });
+    }
+  }
+);
 
 /**
  * @route   DELETE /api/alerts/:id

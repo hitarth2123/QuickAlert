@@ -195,9 +195,14 @@ const AlertBanner = () => {
                 <span className={`font-bold ${config.text} uppercase text-sm`}>
                   {currentAlert.severity} Alert
                 </span>
-                {currentAlert.metadata?.communityVerified && (
+                {currentAlert.metadata?.communityVerified && !currentAlert.metadata?.adminVerified && (
                   <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-200 text-purple-900">
                     👥 Community Verified
+                  </span>
+                )}
+                {currentAlert.metadata?.adminVerified && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-200 text-green-900">
+                    🛡️ Admin Verified
                   </span>
                 )}
                 {visibleAlerts.length > 1 && (
