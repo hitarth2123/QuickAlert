@@ -16,10 +16,27 @@ const ReportDetailPage = () => {
   const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState(null);
+  const [userVote, setUserVote] = useState(null);
 
   useEffect(() => {
     fetchReport();
   }, [id]);
+
+  // Check if user has already voted when report or user changes
+  useEffect(() => {
+    if (report && user && report.votes?.voters && report.votes.voters.length > 0) {
+      const userId = user._id || user.id;
+      const existingVote = report.votes.voters.find(v => {
+        const odId = v.user?.toString() || v.user;
+        return odId === userId;
+      });
+      if (existingVote) {
+        setUserVote(existingVote.vote === 'up' ? 'confirm' : 'deny');
+      } else {
+        setUserVote(null);
+      }
+    }
+  }, [report, user]);
 
   const fetchReport = async () => {
     try {
@@ -68,6 +85,7 @@ const ReportDetailPage = () => {
         userLat: currentLat,
         userLng: currentLng,
       });
+      setUserVote(vote); // Update local state to hide buttons
       notify.success(`Report ${vote === 'confirm' ? 'confirmed' : 'denied'} successfully`);
       fetchReport(); // Refresh report data
     } catch (err) {
@@ -325,34 +343,43 @@ const ReportDetailPage = () => {
 
             {/* Verify buttons */}
             {isAuthenticated && report.status !== 'resolved' && report.status !== 'rejected' && (
-              <div className="mt-4 flex gap-3">
-                <button
-                  onClick={() => handleVerify('confirm')}
-                  disabled={verifying}
-                  className="flex-1 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {verifying ? (
-                    <span className="animate-spin">⏳</span>
-                  ) : (
-                    <>
-                      <span>👍</span> Confirm Report
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={() => handleVerify('deny')}
-                  disabled={verifying}
-                  className="flex-1 py-3 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {verifying ? (
-                    <span className="animate-spin">⏳</span>
-                  ) : (
-                    <>
-                      <span>👎</span> Deny Report
-                    </>
-                  )}
-                </button>
-              </div>
+              userVote ? (
+                <div className="mt-4 p-4 bg-gray-50 rounded-lg text-center">
+                  <p className="text-sm text-gray-600">
+                    You {userVote === 'confirm' ? '👍 confirmed' : '👎 denied'} this report
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">Thank you for your verification!</p>
+                </div>
+              ) : (
+                <div className="mt-4 flex gap-3">
+                  <button
+                    onClick={() => handleVerify('confirm')}
+                    disabled={verifying}
+                    className="flex-1 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {verifying ? (
+                      <span className="animate-spin">⏳</span>
+                    ) : (
+                      <>
+                        <span>👍</span> Confirm Report
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => handleVerify('deny')}
+                    disabled={verifying}
+                    className="flex-1 py-3 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {verifying ? (
+                      <span className="animate-spin">⏳</span>
+                    ) : (
+                      <>
+                        <span>👎</span> Deny Report
+                      </>
+                    )}
+                  </button>
+                </div>
+              )
             )}
 
             {!isAuthenticated && (

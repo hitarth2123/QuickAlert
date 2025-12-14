@@ -279,6 +279,23 @@ const alertSchema = new mongoose.Schema(
       ref: 'User',
     },
     cancellationReason: String,
+    // Additional metadata for community verified alerts
+    metadata: {
+      isAutomated: {
+        type: Boolean,
+        default: false,
+      },
+      source: {
+        type: String,
+        enum: ['official', 'community_verification', 'automated', 'external'],
+      },
+      reportId: String,
+      verificationCount: Number,
+      communityVerified: {
+        type: Boolean,
+        default: false,
+      },
+    },
   },
   {
     timestamps: true,

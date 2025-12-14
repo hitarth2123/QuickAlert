@@ -6,23 +6,41 @@ class SocketService {
     this.listeners = new Map();
     this.currentLocation = null;
     this.isConnected = false;
+    this.listenersSetup = false;
+  }
+
+  // Getter for compatibility (some code uses .connected)
+  get connected() {
+    return this.isConnected || this.socket?.connected || false;
   }
 
   // Initialize socket connection
   connect(token = null) {
-    if (this.socket?.connected) {
+    // Return existing socket if it exists (even if reconnecting)
+    if (this.socket) {
+      // Update auth token if provided and socket exists
+      if (token && this.socket.auth) {
+        this.socket.auth.token = token;
+      }
+      // Make sure socket is connected
+      if (!this.socket.connected) {
+        this.socket.connect();
+      }
       return this.socket;
     }
 
     const socketUrl = import.meta.env.VITE_SOCKET_URL || window.location.origin;
+    console.log('[Socket] Connecting to:', socketUrl);
 
     this.socket = io(socketUrl, {
       auth: token ? { token } : undefined,
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'], // Start with polling, upgrade to websocket
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
+      timeout: 20000,
+      forceNew: false,
     });
 
     this.setupDefaultListeners();
@@ -30,10 +48,13 @@ class SocketService {
     return this.socket;
   }
 
-  // Setup default event listeners
+  // Setup default event listeners (only once)
   setupDefaultListeners() {
+    if (this.listenersSetup) return;
+    this.listenersSetup = true;
+
     this.socket.on('connect', () => {
-      console.log('Socket connected:', this.socket.id);
+      console.log('[Socket] Connected:', this.socket.id);
       this.isConnected = true;
 
       // Rejoin location room if we had one
@@ -43,17 +64,26 @@ class SocketService {
     });
 
     this.socket.on('disconnect', (reason) => {
-      console.log('Socket disconnected:', reason);
+      console.log('[Socket] Disconnected:', reason);
       this.isConnected = false;
     });
 
     this.socket.on('connect_error', (error) => {
-      console.error('Socket connection error:', error.message);
+      console.error('[Socket] Connection error:', error.message);
       this.isConnected = false;
     });
 
     this.socket.on('error', (error) => {
-      console.error('Socket error:', error);
+      console.error('[Socket] Error:', error);
+    });
+
+    this.socket.on('reconnect', (attemptNumber) => {
+      console.log('[Socket] Reconnected after', attemptNumber, 'attempts');
+      this.isConnected = true;
+    });
+
+    this.socket.on('reconnect_attempt', (attemptNumber) => {
+      console.log('[Socket] Reconnection attempt', attemptNumber);
     });
   }
 
@@ -64,18 +94,21 @@ class SocketService {
       this.socket = null;
       this.isConnected = false;
       this.currentLocation = null;
+      this.listenersSetup = false;
     }
   }
 
   // Join a location-based room
   joinLocation(lat, lng) {
     if (!this.socket?.connected) {
-      console.warn('Socket not connected, cannot join location');
-      return;
+      console.warn('[Socket] Not connected, cannot join location');
+      return false;
     }
 
+    console.log('[Socket] Joining location:', lat, lng);
     this.currentLocation = { lat, lng };
     this.socket.emit('joinLocation', { lat, lng });
+    return true;
   }
 
   // Leave current location room
@@ -170,11 +203,6 @@ class SocketService {
     }
 
     this.socket.emit(event, data);
-  }
-
-  // Get connection status
-  get connected() {
-    return this.socket?.connected || false;
   }
 
   // Get socket ID

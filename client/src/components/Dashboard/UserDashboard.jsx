@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { reportsApi, alertsApi } from '../../services/api';
 import { useLocation as useGeoLocation } from '../../context/LocationContext';
@@ -7,8 +7,10 @@ import { useLocation as useGeoLocation } from '../../context/LocationContext';
 const UserDashboard = () => {
   const { user } = useAuth();
   const { location } = useGeoLocation();
+  const routeLocation = useLocation();
   
   const [myReports, setMyReports] = useState([]);
+  const [nearbyReports, setNearbyReports] = useState([]);
   const [nearbyAlerts, setNearbyAlerts] = useState([]);
   const [stats, setStats] = useState({
     totalReports: 0,
@@ -17,25 +19,33 @@ const UserDashboard = () => {
   });
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchDashboardData();
-  }, [location]);
-
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
+    if (!user) return;
+    
     setLoading(true);
     try {
-      // Fetch user's reports
-      const reportsRes = await reportsApi.getAll({ limit: 5, sort: '-createdAt' });
+      // Fetch user's own reports (filter by reporter ID)
+      const userId = user._id || user.id;
+      const reportsRes = await reportsApi.getAll({ 
+        limit: 5, 
+        sort: '-createdAt',
+        reporter: userId 
+      });
       setMyReports(reportsRes.data.data || []);
 
-      // Fetch nearby alerts if location available
+      // Fetch nearby alerts and reports if location available
       if (location) {
-        const alertsRes = await alertsApi.getNearby(
-          location.latitude,
-          location.longitude,
-          10000
-        );
+        const [alertsRes, nearbyReportsRes] = await Promise.all([
+          alertsApi.getNearby(location.latitude, location.longitude, 10000),
+          reportsApi.getNearby(location.latitude, location.longitude, 10000)
+        ]);
         setNearbyAlerts(alertsRes.data.data || []);
+        
+        // Filter out user's own reports from nearby reports
+        const otherReports = (nearbyReportsRes.data.data || []).filter(
+          r => r.reporter?._id !== userId && r.reporter?.id !== userId && r.reporter !== userId
+        );
+        setNearbyReports(otherReports);
       }
 
       // Calculate stats
@@ -50,7 +60,18 @@ const UserDashboard = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [location, user]);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // Refetch when navigating back to dashboard
+  useEffect(() => {
+    if (routeLocation.pathname === '/dashboard') {
+      fetchDashboardData();
+    }
+  }, [routeLocation.pathname, fetchDashboardData]);
 
   const getStatusBadge = (status) => {
     const badges = {
@@ -212,7 +233,7 @@ const UserDashboard = () => {
                         <h3 className="font-medium text-gray-900">{report.title}</h3>
                       </div>
                       <p className="text-sm text-gray-500 mt-1">
-                        {report.category} • {report.verificationCount || 0} verifications
+                        {report.category} • {report.votes?.up || report.verificationCount || 0} verifications
                       </p>
                     </div>
                     <span className="text-xs text-gray-400">
@@ -241,6 +262,48 @@ const UserDashboard = () => {
           </div>
         )}
       </div>
+
+      {/* Nearby Reports from Others */}
+      {nearbyReports.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b">
+            <h2 className="text-lg font-semibold text-gray-900">📍 Reports Nearby</h2>
+            <p className="text-sm text-gray-500">Recent reports from your community</p>
+          </div>
+          <div className="divide-y">
+            {nearbyReports.slice(0, 5).map((report) => (
+              <Link
+                key={report._id}
+                to={`/reports/${report._id}`}
+                className="block p-4 hover:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusBadge(report.status)}`}>
+                        {report.status}
+                      </span>
+                      <h3 className="font-medium text-gray-900">{report.title}</h3>
+                    </div>
+                    <p className="text-sm text-gray-500 mt-1">
+                      {report.category} • {report.votes?.up || 0} verifications
+                      {report.distance && ` • ${report.distance} km away`}
+                    </p>
+                  </div>
+                  <span className="text-xs text-gray-400">
+                    {formatDate(report.createdAt)}
+                  </span>
+                </div>
+              </Link>
+            ))}
+          </div>
+          <div className="px-6 py-3 bg-gray-50 border-t">
+            <Link to="/map" className="text-sm text-red-600 hover:text-red-700 font-medium">
+              View all on map →
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Quick actions */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

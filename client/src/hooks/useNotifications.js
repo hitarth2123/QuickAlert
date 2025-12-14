@@ -179,17 +179,29 @@ const useNotifications = (options = {}) => {
       unsubscribersRef.current.push(unsubscribeReport);
     }
 
-    // Subscribe to report verification
+    // Subscribe to report verification - notify users within 5km
     const unsubscribeVerified = socketService.onReportVerified((data) => {
+      const title = data.title || 'Nearby Incident';
+      const category = data.category ? `[${data.category.toUpperCase()}] ` : '';
+      
       addNotification({
         id: `verified-${data.reportId}`,
         type: 'verification',
-        title: 'Report Verified',
-        message: `A report has been verified by ${data.verificationCount} users`,
+        title: '⚠️ Verified Report Nearby',
+        message: `${category}${title} - Confirmed by ${data.verificationCount} users`,
         data,
         timestamp: new Date(),
         read: false,
       });
+      
+      // Also show browser notification if permitted
+      if (Notification.permission === 'granted') {
+        new Notification('⚠️ Verified Report Nearby', {
+          body: `${category}${title}`,
+          icon: '/alert-icon.png',
+          tag: `verified-${data.reportId}`,
+        });
+      }
     });
 
     unsubscribersRef.current.push(unsubscribeVerified);

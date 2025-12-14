@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import useNotifications from '../../hooks/useNotifications';
+import { useNotificationContext } from '../../context/NotificationContext';
 
 const NotificationCenter = () => {
   const {
@@ -11,11 +11,7 @@ const NotificationCenter = () => {
     permission,
     requestPermission,
     isConnected,
-  } = useNotifications({
-    enableAlerts: true,
-    enableReports: true,
-    autoRequestPermission: false,
-  });
+  } = useNotificationContext();
 
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -42,6 +38,8 @@ const NotificationCenter = () => {
         return '✅';
       case 'alert_cancelled':
         return '❌';
+      case 'info':
+        return 'ℹ️';
       default:
         return '🔔';
     }
@@ -150,21 +148,35 @@ const NotificationCenter = () => {
           <div className="overflow-y-auto flex-1 max-h-96">
             {notifications.length > 0 ? (
               <div className="divide-y">
-                {notifications.map((notification, index) => (
-                  <Link
-                    key={notification.id || index}
-                    to={
-                      notification.type === 'alert'
-                        ? `/alerts/${notification.data?._id}`
-                        : notification.type === 'report'
-                        ? `/map?reportId=${notification.data?._id}`
-                        : '/map'
+                {notifications.map((notification, index) => {
+                  const getNotificationLink = () => {
+                    if (notification.type === 'alert') {
+                      return `/alerts/${notification.data?._id || notification.data?.alertId}`;
                     }
-                    onClick={() => setIsOpen(false)}
-                    className={`block px-4 py-3 hover:bg-gray-50 transition-colors ${
-                      !notification.read ? 'bg-blue-50/50' : ''
-                    }`}
-                  >
+                    if (notification.type === 'report') {
+                      return `/reports/${notification.data?._id || notification.data?.reportId}`;
+                    }
+                    if (notification.type === 'verification') {
+                      return `/reports/${notification.data?.reportId}`;
+                    }
+                    // For info and other types, link to map
+                    return '/map';
+                  };
+
+                  const isInfoType = notification.type === 'info';
+                  const NotificationWrapper = isInfoType ? 'div' : Link;
+                  const wrapperProps = isInfoType 
+                    ? { onClick: () => setIsOpen(false) }
+                    : { to: getNotificationLink(), onClick: () => setIsOpen(false) };
+
+                  return (
+                    <NotificationWrapper
+                      key={notification.id || index}
+                      {...wrapperProps}
+                      className={`block px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer ${
+                        !notification.read ? 'bg-blue-50/50' : ''
+                      }`}
+                    >
                     <div className="flex items-start gap-3">
                       {/* Icon */}
                       <div
@@ -199,8 +211,9 @@ const NotificationCenter = () => {
                         <div className="w-2 h-2 bg-blue-600 rounded-full mt-2" />
                       )}
                     </div>
-                  </Link>
-                ))}
+                  </NotificationWrapper>
+                  );
+                })}
               </div>
             ) : (
               <div className="px-4 py-12 text-center">
@@ -224,13 +237,22 @@ const NotificationCenter = () => {
                 />
                 {isConnected ? 'Live updates active' : 'Reconnecting...'}
               </span>
-              <Link
-                to="/settings/notifications"
-                onClick={() => setIsOpen(false)}
-                className="text-red-600 hover:text-red-700"
-              >
-                Settings
-              </Link>
+              <div className="flex items-center gap-3">
+                <Link
+                  to="/notifications"
+                  onClick={() => setIsOpen(false)}
+                  className="text-gray-600 hover:text-gray-800"
+                >
+                  View all
+                </Link>
+                <Link
+                  to="/settings/notifications"
+                  onClick={() => setIsOpen(false)}
+                  className="text-red-600 hover:text-red-700"
+                >
+                  Settings
+                </Link>
+              </div>
             </div>
           </div>
         </div>

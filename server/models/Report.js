@@ -133,6 +133,11 @@ const reportSchema = new mongoose.Schema(
     },
     verifiedAt: Date,
     verificationNotes: String,
+    // Link to alert created from this report (when community verified)
+    alertId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Alert',
+    },
     // Community votes (for credibility)
     votes: {
       up: {

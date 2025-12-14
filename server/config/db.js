@@ -18,6 +18,25 @@ const connectDB = async () => {
 
     logger.connection('MongoDB', 'success', `Connected to ${conn.connection.host}/${conn.connection.name}`);
 
+    // Drop problematic sessions index if it exists (one-time fix)
+    try {
+      const db = mongoose.connection.db;
+      const collections = await db.listCollections({ name: 'sessions' }).toArray();
+      if (collections.length > 0) {
+        const indexes = await db.collection('sessions').indexes();
+        const hasTokenIndex = indexes.some(idx => idx.name === 'token_1');
+        if (hasTokenIndex) {
+          await db.collection('sessions').dropIndex('token_1');
+          logger.info('Dropped problematic token_1 index from sessions collection');
+        }
+      }
+    } catch (indexError) {
+      // Index might not exist, that's fine
+      if (!indexError.message.includes('index not found')) {
+        logger.debug('Session index cleanup:', indexError.message);
+      }
+    }
+
     // Handle connection events
     mongoose.connection.on('error', (err) => {
       logger.error(`MongoDB connection error`, err);

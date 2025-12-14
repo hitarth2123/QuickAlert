@@ -72,9 +72,12 @@ export const AuthProvider = ({ children }) => {
     try {
       setError(null);
       const response = await api.post('/auth/firebase-verify', { firebaseToken });
-      const { token: newToken, user: userData } = response.data.data;
+      const { token: newToken, refreshToken, user: userData } = response.data.data;
       
       localStorage.setItem('token', newToken);
+      if (refreshToken) {
+        localStorage.setItem('refreshToken', refreshToken);
+      }
       setToken(newToken);
       setUser(userData);
       
@@ -90,9 +93,12 @@ export const AuthProvider = ({ children }) => {
     try {
       setError(null);
       const response = await api.post('/auth/login', { email, password, deviceInfo });
-      const { token: newToken, user: userData } = response.data;
+      const { token: newToken, refreshToken, user: userData } = response.data.data;
       
       localStorage.setItem('token', newToken);
+      if (refreshToken) {
+        localStorage.setItem('refreshToken', refreshToken);
+      }
       setToken(newToken);
       setUser(userData);
       
@@ -111,6 +117,7 @@ export const AuthProvider = ({ children }) => {
       console.error('Logout error:', err);
     } finally {
       localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
       setToken(null);
       setUser(null);
     }

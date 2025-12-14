@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { LocationProvider } from './context/LocationContext';
+import { NotificationProvider } from './context/NotificationContext';
 
 // Shared Components
 import Navbar from './components/Shared/Navbar';
@@ -18,9 +19,12 @@ import DashboardPage from './pages/DashboardPage';
 import ReportPage from './pages/ReportPage';
 import ReportDetailPage from './pages/ReportDetailPage';
 import AlertPage from './pages/AlertPage';
+import AlertDetailPage from './pages/AlertDetailPage';
 import AlertCreatePage from './pages/AlertCreatePage';
 import AdminPage from './pages/AdminPage';
 import ProfilePage from './pages/ProfilePage';
+import NotificationsPage from './pages/NotificationsPage';
+import NotificationSettingsPage from './pages/NotificationSettingsPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 import NotFoundPage from './pages/NotFoundPage';
 
@@ -29,10 +33,11 @@ function App() {
     <Router>
       <AuthProvider>
         <LocationProvider>
-          <div className="min-h-screen bg-gray-50">
-            <Navbar />
-            <AlertBanner />
-            <Notification />
+          <NotificationProvider>
+            <div className="min-h-screen bg-gray-50">
+              <Navbar />
+              <AlertBanner />
+              <Notification />
             
             <main>
               <Routes>
@@ -76,6 +81,14 @@ function App() {
                   } 
                 />
                 <Route 
+                  path="/alerts/:id" 
+                  element={
+                    <ProtectedRoute>
+                      <AlertDetailPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
                   path="/dashboard" 
                   element={
                     <ProtectedRoute>
@@ -104,6 +117,22 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <ProfilePage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/notifications" 
+                  element={
+                    <ProtectedRoute>
+                      <NotificationsPage />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/settings/notifications" 
+                  element={
+                    <ProtectedRoute>
+                      <NotificationSettingsPage />
                     </ProtectedRoute>
                   } 
                 />
@@ -151,6 +180,7 @@ function App() {
               </Routes>
             </main>
           </div>
+          </NotificationProvider>
         </LocationProvider>
       </AuthProvider>
     </Router>

@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Marker, Popup, Circle } from 'react-leaflet';
+import { useNavigate } from 'react-router-dom';
 import L from 'leaflet';
 import { useAuth } from '../../context/AuthContext';
 import { calculateDistance, formatDistance } from '../../utils/geoLocation';
@@ -50,8 +51,8 @@ const getMarkerColor = (type, incident) => {
   }
   
   // For reports: check verification status
-  const verificationCount = incident.verificationCount || 0;
-  if (incident.status === 'verified' || verificationCount >= VERIFICATION_THRESHOLD) {
+  const confirmCount = incident.votes?.up || 0;
+  if (incident.status === 'verified' || confirmCount >= VERIFICATION_THRESHOLD) {
     return '#10B981'; // Green for verified
   }
   
@@ -83,7 +84,8 @@ const createCustomIcon = (type, incident) => {
 
   // Report marker with color coding
   const category = categoryConfig[incident.category] || categoryConfig.other;
-  const isVerified = incident.status === 'verified' || (incident.verificationCount || 0) >= VERIFICATION_THRESHOLD;
+  const confirmCount = incident.votes?.up || 0;
+  const isVerified = incident.status === 'verified' || confirmCount >= VERIFICATION_THRESHOLD;
   
   return L.divIcon({
     className: 'custom-report-marker',
@@ -126,8 +128,34 @@ const timeAgo = (date) => {
 
 const IncidentMarker = ({ incident, type = 'report', onClick, onVerify, userLocation }) => {
   const { isAuthenticated, user } = useAuth();
+  const navigate = useNavigate();
   const [verifying, setVerifying] = useState(false);
-  const [hasVerified, setHasVerified] = useState(false);
+  const [userVote, setUserVote] = useState(null);
+  
+  // Update userVote when incident or user changes
+  useEffect(() => {
+    if (user && incident.votes?.voters) {
+      const userId = String(user._id || user.id);
+      console.log(`[IncidentMarker] Checking vote for user ${userId} on incident ${incident._id}`);
+      console.log(`[IncidentMarker] Voters:`, incident.votes.voters);
+      
+      const existingVote = incident.votes.voters.find(v => {
+        const voterId = String(v.user?._id || v.user?.id || v.user);
+        console.log(`[IncidentMarker] Comparing voter ${voterId} with user ${userId}`);
+        return voterId === userId;
+      });
+      
+      if (existingVote) {
+        console.log(`[IncidentMarker] Found existing vote: ${existingVote.vote}`);
+        setUserVote(existingVote.vote === 'up' ? 'confirm' : 'deny');
+      } else {
+        console.log(`[IncidentMarker] No existing vote found`);
+        setUserVote(null);
+      }
+    } else {
+      setUserVote(null);
+    }
+  }, [incident.votes?.voters, user, incident._id]);
   
   if (!incident?.location?.coordinates) return null;
 
@@ -135,11 +163,19 @@ const IncidentMarker = ({ incident, type = 'report', onClick, onVerify, userLoca
   const position = [lat, lng];
   const icon = createCustomIcon(type, incident);
 
+  // Navigate to detail page
+  const handleViewDetails = (e) => {
+    e.stopPropagation();
+    const path = type === 'report' ? `/reports/${incident._id}` : `/alerts/${incident._id}`;
+    navigate(path);
+  };
+
   const category = categoryConfig[incident.category] || categoryConfig.other;
   const status = statusBadge[incident.status] || statusBadge.pending;
   const severity = type === 'alert' ? severityConfig[incident.severity] : null;
-  const verificationCount = incident.verificationCount || 0;
-  const isVerified = incident.status === 'verified' || verificationCount >= VERIFICATION_THRESHOLD;
+  const confirmCount = incident.votes?.up || 0;
+  const denyCount = incident.votes?.down || 0;
+  const isVerified = incident.status === 'verified' || confirmCount >= VERIFICATION_THRESHOLD;
 
   // Calculate distance from user to incident
   const distanceToIncident = useMemo(() => {
@@ -152,25 +188,23 @@ const IncidentMarker = ({ incident, type = 'report', onClick, onVerify, userLoca
     );
   }, [userLocation, lat, lng]);
 
-  // Check if user can verify (authenticated, within 2km, and hasn't already verified)
+  // Check if user can verify (authenticated, within 2km)
   const canVerify = useMemo(() => {
     if (!isAuthenticated) return false;
     if (type === 'alert') return false;
     if (incident.status === 'verified' || incident.status === 'rejected') return false;
     if (distanceToIncident === null) return false;
     if (distanceToIncident > MAX_VERIFICATION_DISTANCE) return false;
-    // Check if user already verified (would need backend support for this)
-    if (incident.verifiedBy?.includes(user?._id)) return false;
     return true;
-  }, [isAuthenticated, type, incident, distanceToIncident, user]);
+  }, [isAuthenticated, type, incident, distanceToIncident]);
 
   const handleVerify = async (vote) => {
-    if (!onVerify || !canVerify || verifying) return;
+    if (!onVerify || !canVerify || verifying || userVote) return;
     
     setVerifying(true);
     try {
       await onVerify(incident._id, vote);
-      setHasVerified(true);
+      setUserVote(vote); // Set vote immediately for instant UI feedback
     } catch (error) {
       console.error('Verification failed:', error);
     } finally {
@@ -240,12 +274,18 @@ const IncidentMarker = ({ incident, type = 'report', onClick, onVerify, userLoca
                 <span>{timeAgo(incident.createdAt)}</span>
               </div>
               {type === 'report' && (
-                <div className="flex items-center gap-1">
-                  <span>👥</span>
-                  <span>{verificationCount} verification{verificationCount !== 1 ? 's' : ''}</span>
-                  {verificationCount < VERIFICATION_THRESHOLD && (
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    <span>👍</span>
+                    <span className="text-green-600 font-medium">{incident.votes?.up || 0}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span>👎</span>
+                    <span className="text-red-600 font-medium">{incident.votes?.down || 0}</span>
+                  </div>
+                  {!isVerified && (incident.votes?.up || 0) < VERIFICATION_THRESHOLD && (
                     <span className="text-gray-400">
-                      (need {VERIFICATION_THRESHOLD - verificationCount} more)
+                      (need {VERIFICATION_THRESHOLD - (incident.votes?.up || 0)} more to verify)
                     </span>
                   )}
                 </div>
@@ -261,9 +301,10 @@ const IncidentMarker = ({ incident, type = 'report', onClick, onVerify, userLoca
             {/* Verification section for reports */}
             {type === 'report' && !isVerified && (
               <div className="mt-3 pt-3 border-t border-gray-200">
-                {hasVerified ? (
-                  <div className="text-center text-sm text-green-600 font-medium">
-                    ✓ Thanks for verifying!
+                {userVote ? (
+                  <div className="text-center text-sm text-gray-600 py-1">
+                    <span>{userVote === 'confirm' ? '👍' : '👎'}</span>
+                    <span className="ml-1">You {userVote === 'confirm' ? 'confirmed' : 'denied'} this report</span>
                   </div>
                 ) : canVerify ? (
                   <div>
@@ -274,14 +315,14 @@ const IncidentMarker = ({ incident, type = 'report', onClick, onVerify, userLoca
                       <button
                         onClick={() => handleVerify('confirm')}
                         disabled={verifying}
-                        className="flex-1 py-1.5 px-3 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors disabled:opacity-50"
+                        className="flex-1 py-1.5 px-3 text-sm rounded-md transition-colors disabled:opacity-50 bg-green-600 text-white hover:bg-green-700"
                       >
                         {verifying ? '...' : '✓ Confirm'}
                       </button>
                       <button
                         onClick={() => handleVerify('deny')}
                         disabled={verifying}
-                        className="flex-1 py-1.5 px-3 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 transition-colors disabled:opacity-50"
+                        className="flex-1 py-1.5 px-3 text-sm rounded-md transition-colors disabled:opacity-50 bg-red-600 text-white hover:bg-red-700"
                       >
                         {verifying ? '...' : '✕ Deny'}
                       </button>
@@ -300,14 +341,12 @@ const IncidentMarker = ({ incident, type = 'report', onClick, onVerify, userLoca
             )}
 
             {/* View details button */}
-            {onClick && (
-              <button
-                onClick={onClick}
-                className="mt-3 w-full py-1.5 px-3 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 transition-colors"
-              >
-                View Details
-              </button>
-            )}
+            <button
+              onClick={handleViewDetails}
+              className="mt-3 w-full py-1.5 px-3 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 transition-colors"
+            >
+              View Details
+            </button>
           </div>
         </Popup>
       </Marker>

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Report = require('../models/Report');
+const Alert = require('../models/Alert');
 const { protect, optionalAuth } = require('../middleware/auth');
 const { authorize, ROLES } = require('../middleware/roleCheck');
 const { reportCreationLimiter, searchLimiter } = require('../middleware/rateLimiter');
@@ -144,6 +145,7 @@ router.get('/', searchLimiter, async (req, res) => {
       category,
       severity,
       status,
+      reporter, // Filter by reporter ID (for "my reports")
     } = req.query;
 
     // Build query
@@ -151,6 +153,11 @@ router.get('/', searchLimiter, async (req, res) => {
       isExpired: { $ne: true },
       status: { $nin: ['rejected', 'duplicate'] },
     };
+
+    // Reporter filter (for fetching user's own reports)
+    if (reporter) {
+      query.reporter = reporter;
+    }
 
     // Category filter
     if (category) {
@@ -259,6 +266,20 @@ router.get('/nearby', searchLimiter, async (req, res) => {
       });
     }
 
+    // Get user ID from token if authenticated (optional)
+    let userId = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const jwt = require('jsonwebtoken');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        userId = decoded.id;
+      } catch (e) {
+        // Token invalid, continue as anonymous
+      }
+    }
+
     // Build query
     const query = {
       isExpired: { $ne: true },
@@ -294,17 +315,24 @@ router.get('/nearby', searchLimiter, async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    // If user is authenticated, include votes.voters to check their vote
+    const selectFields = userId 
+      ? '-sensitiveData' 
+      : '-sensitiveData -votes.voters';
+    
+    console.log(`[Nearby] User ID: ${userId}, Select fields: ${selectFields}`);
+
     const [reports, total] = await Promise.all([
       Report.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit))
         .populate('reporter', 'firstName lastName avatar')
-        .select('-sensitiveData -votes.voters'),
+        .select(selectFields),
       Report.countDocuments(query),
     ]);
 
-    // Add distance to each report
+    // Add distance to each report and filter votes.voters to only current user
     const processedReports = reports.map((report) => {
       const reportObj = report.toObject();
 
@@ -319,6 +347,16 @@ router.get('/nearby', searchLimiter, async (req, res) => {
           report.location.coordinates,
           [parseFloat(lng), parseFloat(lat)]
         ).toFixed(2);
+      }
+
+      // If authenticated, filter voters to only include current user's vote
+      if (userId && reportObj.votes?.voters) {
+        console.log(`[Nearby] Report ${reportObj._id} has ${reportObj.votes.voters.length} total voters`);
+        const userVote = reportObj.votes.voters.find(
+          v => v.user.toString() === userId.toString()
+        );
+        console.log(`[Nearby] User vote found:`, userVote);
+        reportObj.votes.voters = userVote ? [userVote] : [];
       }
 
       return reportObj;
@@ -351,12 +389,25 @@ router.get('/nearby', searchLimiter, async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
   try {
+    // Get user ID from token if authenticated (optional)
+    let userId = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const jwt = require('jsonwebtoken');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        userId = decoded.id;
+      } catch (e) {
+        // Token invalid, continue as anonymous
+      }
+    }
+
     const report = await Report.findById(req.params.id)
       .populate('reporter', 'firstName lastName avatar')
       .populate('assignedTo', 'firstName lastName')
       .populate('verifiedBy', 'firstName lastName')
-      .populate('updates.author', 'firstName lastName avatar')
-      .select('-votes.voters');
+      .populate('updates.author', 'firstName lastName avatar');
 
     if (!report) {
       return res.status(404).json({
@@ -379,6 +430,19 @@ router.get('/:id', async (req, res) => {
 
     // Remove sensitive data for public access
     delete responseReport.sensitiveData;
+
+    // Filter voters to only include current user's vote (if authenticated)
+    if (userId && responseReport.votes?.voters) {
+      const userVote = responseReport.votes.voters.find(
+        v => v.user.toString() === userId.toString()
+      );
+      responseReport.votes.voters = userVote ? [userVote] : [];
+    } else {
+      // Remove all voters for anonymous users
+      if (responseReport.votes) {
+        responseReport.votes.voters = [];
+      }
+    }
 
     res.json({
       success: true,
@@ -494,6 +558,85 @@ router.post('/:id/verify', protect, async (req, res) => {
       report.verificationStatus = 'verified';
       report.status = 'verified';
       report.verifiedAt = new Date();
+
+      // Create an alert from the verified report
+      try {
+        const categoryToType = {
+          accident: 'traffic',
+          fire: 'emergency',
+          flood: 'weather',
+          crime: 'crime',
+          medical: 'health',
+          infrastructure: 'infrastructure',
+          other: 'community',
+        };
+
+        const categoryToSeverity = {
+          accident: 'warning',
+          fire: 'critical',
+          flood: 'warning',
+          crime: 'warning',
+          medical: 'advisory',
+          infrastructure: 'advisory',
+          other: 'info',
+        };
+
+        const alert = new Alert({
+          title: `⚠️ ${report.title || `${report.category} Incident`}`,
+          description: `${report.description || 'Community reported incident'}\n\n📢 **Verified by Community Voting**\nThis alert was automatically generated when ${report.votes.up} community members confirmed this incident report.`,
+          shortDescription: `Community verified: ${report.category} incident reported nearby`,
+          type: categoryToType[report.category] || 'community',
+          severity: categoryToSeverity[report.category] || 'advisory',
+          source: {
+            type: 'report',
+            reportId: report._id,
+            officialSource: 'Community Voting System',
+          },
+          createdBy: report.reporter || req.user._id,
+          targetArea: {
+            type: 'Circle',
+            coordinates: report.location?.coordinates || [0, 0],
+            radius: 5, // 5km radius for community alerts
+            address: report.locationDescription,
+          },
+          effectiveFrom: new Date(),
+          effectiveUntil: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+          isActive: true,
+          status: 'active',
+          channels: {
+            push: true,
+            inApp: true,
+            email: false,
+            sms: false,
+          },
+          instructions: [
+            { text: 'Stay alert and aware of your surroundings', priority: 1 },
+            { text: 'Avoid the area if possible', priority: 2 },
+            { text: 'Report any additional information', priority: 3 },
+          ],
+          metadata: {
+            isAutomated: true,
+            source: 'community_verification',
+            reportId: report._id.toString(),
+            verificationCount: report.votes.up,
+            communityVerified: true,
+          },
+        });
+
+        await alert.save();
+        report.alertId = alert._id; // Link the alert to the report
+        
+        logger.info(`Alert created from verified report: ${alert._id}`);
+
+        // Emit the new alert via socket
+        const io = req.app.get('io');
+        if (io && io.emitOfficialAlert) {
+          io.emitOfficialAlert(alert);
+        }
+      } catch (alertError) {
+        console.error('Error creating alert from verified report:', alertError);
+        // Don't fail the vote if alert creation fails
+      }
 
       // Emit reportVerified event (geo-filtered)
       const io = req.app.get('io');

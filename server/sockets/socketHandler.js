@@ -198,12 +198,14 @@ const socketHandler = (io) => {
     /**
      * @event joinLocation
      * @desc User opens map, broadcasts location
-     * @payload {userId, location: {lat, lng}}
+     * @payload {lat, lng} or {userId, location: {lat, lng}}
      */
     socket.on('joinLocation', async (data) => {
       try {
-        const { userId, location } = data;
-        const { lat, lng } = location || {};
+        // Support both formats: { lat, lng } and { location: { lat, lng } }
+        const lat = data.lat || data.location?.lat;
+        const lng = data.lng || data.location?.lng;
+        const userId = data.userId;
 
         if (!lat || !lng) {
           socket.emit('error', { message: 'Invalid location coordinates' });
@@ -256,19 +258,8 @@ const socketHandler = (io) => {
             'location.coordinates': [lng, lat],
             lastSeen: new Date(),
           });
-
-          // Create/update session for population tracking
-          await Session.findOneAndUpdate(
-            { socketId: socket.id },
-            {
-              userId: socket.userId,
-              socketId: socket.id,
-              'location.coordinates': [lng, lat],
-              isActive: true,
-              lastPing: new Date(),
-            },
-            { upsert: true, new: true }
-          );
+          // Note: Session tracking is done in-memory via activeConnections
+          // No need to create Session documents for real-time location tracking
         }
 
         socket.emit('joinedLocation', {
@@ -315,12 +306,17 @@ const socketHandler = (io) => {
           });
         }
 
-        // Update session
+        // Update session (non-blocking, errors won't prevent leaving)
         if (socket.userId) {
-          await Session.findOneAndUpdate(
-            { socketId: socket.id },
-            { isActive: false, disconnectedAt: new Date() }
-          );
+          try {
+            await Session.findOneAndUpdate(
+              { socketId: socket.id },
+              { isActive: false, disconnectedAt: new Date() }
+            );
+          } catch (sessionError) {
+            // Ignore session errors, in-memory tracking is sufficient
+            console.debug('[Socket] Session update skipped:', sessionError.message);
+          }
         }
 
         socket.emit('leftLocation', { success: true });
@@ -546,7 +542,7 @@ const socketHandler = (io) => {
 
   /**
    * @event reportVerified
-   * @desc Update marker color on all clients
+   * @desc Update marker color on all clients and notify nearby users
    * @trigger Report reaches 3 verifications
    */
   io.emitReportVerified = (report) => {
@@ -555,18 +551,23 @@ const socketHandler = (io) => {
       newStatus: report.status,
       verificationStatus: report.verificationStatus,
       verificationCount: report.verificationCount || report.votes?.up || 0,
+      title: report.title,
+      category: report.category,
+      description: report.description,
+      location: report.location,
     };
 
     // Emit to report room subscribers
     io.to(`report:${report._id}`).emit('reportVerified', payload);
 
-    // Also emit to nearby users
+    // Notify users within 10km radius of the verified report
     if (report.location?.coordinates) {
       const [lng, lat] = report.location.coordinates;
-      const nearbySocketIds = getSocketsInRadius(lat, lng, 10);
+      const nearbySocketIds = getSocketsInRadius(lat, lng, 10); // 10km radius
       nearbySocketIds.forEach((socketId) => {
         io.to(socketId).emit('reportVerified', payload);
       });
+      console.log(`[Socket] reportVerified notified ${nearbySocketIds.length} users within 10km`);
     }
 
     console.log(`[Socket] reportVerified emitted for report: ${report._id}`);

@@ -14,7 +14,24 @@ export const useLocation = () => {
 
 export const LocationProvider = ({ children }) => {
   const { isAuthenticated, updateLocation } = useAuth();
-  const [location, setLocation] = useState(null);
+  
+  // Initialize with cached location from localStorage
+  const [location, setLocation] = useState(() => {
+    try {
+      const cached = localStorage.getItem('userLocation');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        // Check if cached location is less than 24 hours old
+        if (parsed.timestamp && Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse cached location:', e);
+    }
+    return null;
+  });
+  
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [watching, setWatching] = useState(false);
@@ -23,6 +40,15 @@ export const LocationProvider = ({ children }) => {
 
   // Update interval in milliseconds (30 seconds)
   const UPDATE_INTERVAL = 30000;
+
+  // Save location to localStorage
+  const cacheLocation = useCallback((loc) => {
+    try {
+      localStorage.setItem('userLocation', JSON.stringify(loc));
+    } catch (e) {
+      console.error('Failed to cache location:', e);
+    }
+  }, []);
 
   // Get current position once
   const getLocation = useCallback(async () => {
@@ -35,9 +61,10 @@ export const LocationProvider = ({ children }) => {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
         accuracy: position.coords.accuracy,
-        timestamp: position.timestamp,
+        timestamp: Date.now(),
       };
       setLocation(newLocation);
+      cacheLocation(newLocation);
 
       // Update server if authenticated
       if (isAuthenticated) {
@@ -51,7 +78,7 @@ export const LocationProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated, updateLocation]);
+  }, [isAuthenticated, updateLocation, cacheLocation]);
 
   // Start watching position
   const startWatching = useCallback(() => {
@@ -66,9 +93,10 @@ export const LocationProvider = ({ children }) => {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
           accuracy: position.coords.accuracy,
-          timestamp: position.timestamp,
+          timestamp: Date.now(),
         };
         setLocation(newLocation);
+        cacheLocation(newLocation);
 
         // Throttle server updates
         const now = Date.now();
@@ -89,7 +117,7 @@ export const LocationProvider = ({ children }) => {
         console.error('Watch position error:', err);
       }
     );
-  }, [isAuthenticated, updateLocation]);
+  }, [isAuthenticated, updateLocation, cacheLocation]);
 
   // Stop watching position
   const stopWatching = useCallback(() => {

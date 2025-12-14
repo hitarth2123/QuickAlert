@@ -191,10 +191,15 @@ const AlertBanner = () => {
             
             {/* Alert content */}
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className={`font-bold ${config.text} uppercase text-sm`}>
                   {currentAlert.severity} Alert
                 </span>
+                {currentAlert.metadata?.communityVerified && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-200 text-purple-900">
+                    👥 Community Verified
+                  </span>
+                )}
                 {visibleAlerts.length > 1 && (
                   <span className={`text-xs ${config.text} opacity-75`}>
                     ({currentAlertIndex + 1}/{visibleAlerts.length})

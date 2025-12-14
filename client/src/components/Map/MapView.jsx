@@ -143,11 +143,27 @@ const LocateControl = ({ onLocate }) => {
   );
 };
 
+// Get cached location for initial map center
+const getCachedLocation = () => {
+  try {
+    const cached = localStorage.getItem('userLocation');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed.latitude && parsed.longitude) {
+        return [parsed.latitude, parsed.longitude];
+      }
+    }
+  } catch (e) {
+    console.error('Failed to get cached location:', e);
+  }
+  return null;
+};
+
 // Main MapView component
 const MapView = ({
   reports = [],
   alerts = [],
-  center = [40.7128, -74.006], // Default to NYC
+  center: propCenter,
   zoom = 13,
   onMapClick,
   onMoveEnd,
@@ -162,8 +178,10 @@ const MapView = ({
   children,
 }) => {
   const mapRef = useRef(null);
-  const [mapCenter, setMapCenter] = useState(center);
-  const [hasFlownToUser, setHasFlownToUser] = useState(false);
+  // Use cached location, then prop center, then NYC as fallback
+  const defaultCenter = getCachedLocation() || propCenter || [40.7128, -74.006];
+  const [mapCenter, setMapCenter] = useState(defaultCenter);
+  const [hasFlownToUser, setHasFlownToUser] = useState(!!getCachedLocation());
   const { location } = useGeoLocation();
 
   // Fly to user location when first available

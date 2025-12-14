@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import MapView from '../components/Map/MapView';
 import PopulationEstimator from '../components/Map/PopulationEstimator';
 import { reportsApi, alertsApi } from '../services/api';
@@ -16,8 +16,10 @@ import {
 
 const MapPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const routeLocation = useLocation();
   const { location: userLocation } = useGeoLocation();
-  const { isAuthenticated, isAdmin, isResponder } = useAuth();
+  const { isAuthenticated, isAdmin, isResponder, user } = useAuth();
+  const lastPathRef = useRef(routeLocation.pathname);
   
   const [reports, setReports] = useState([]);
   const [alerts, setAlerts] = useState([]);
@@ -61,6 +63,13 @@ const MapPage = () => {
 
       let filteredReports = reportsRes.data.data || [];
       let filteredAlerts = alertsRes.data.data || [];
+      
+      // Debug logging
+      console.log('[MapPage] Reports loaded:', filteredReports.length);
+      if (filteredReports.length > 0) {
+        console.log('[MapPage] First report votes:', filteredReports[0].votes);
+        console.log('[MapPage] First report voters:', filteredReports[0].votes?.voters);
+      }
 
       // Apply category filter
       if (filters.categories.length > 0) {
@@ -84,6 +93,32 @@ const MapPage = () => {
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  // Refetch data when returning to this page from another route (e.g., from report detail)
+  useEffect(() => {
+    // Check if we're coming back to map from another page
+    if (lastPathRef.current !== routeLocation.pathname) {
+      lastPathRef.current = routeLocation.pathname;
+      if (routeLocation.pathname === '/map') {
+        loadData();
+      }
+    }
+  }, [routeLocation.pathname, loadData]);
+
+  // Refetch data when page becomes visible (e.g., returning from another tab)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadData();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [loadData]);
 
   // Real-time updates
@@ -139,19 +174,44 @@ const MapPage = () => {
     }
     
     try {
-      const response = await reportsApi.verify(reportId, vote);
+      const response = await reportsApi.verify(reportId, {
+        vote,
+        userLat: userLocation?.latitude,
+        userLng: userLocation?.longitude
+      });
       
-      // Update local state with new verification count
+      // Update local state with new verification count and add user's vote to voters array
       setReports((prev) =>
-        prev.map((r) =>
-          r._id === reportId
-            ? { 
-                ...r, 
-                verificationCount: response.data.data?.verificationCount || r.verificationCount + 1,
-                status: response.data.data?.status || r.status
-              }
-            : r
-        )
+        prev.map((r) => {
+          if (r._id !== reportId) return r;
+          
+          const voteType = vote === 'confirm' ? 'up' : 'down';
+          const userId = user?._id || user?.id;
+          
+          // Create updated voters array
+          let updatedVoters = [...(r.votes?.voters || [])];
+          const existingVoteIndex = updatedVoters.findIndex(v => v.user === userId);
+          
+          if (existingVoteIndex !== -1) {
+            // Update existing vote
+            updatedVoters[existingVoteIndex] = { ...updatedVoters[existingVoteIndex], vote: voteType };
+          } else {
+            // Add new vote
+            updatedVoters.push({ user: userId, vote: voteType, votedAt: new Date() });
+          }
+          
+          return { 
+            ...r, 
+            verificationCount: response.data.data?.confirms || r.verificationCount + 1,
+            status: response.data.data?.verificationStatus === 'verified' ? 'verified' : r.status,
+            votes: {
+              ...r.votes,
+              up: response.data.data?.confirms || r.votes?.up || 0,
+              down: response.data.data?.denies || r.votes?.down || 0,
+              voters: updatedVoters
+            }
+          };
+        })
       );
       
       notify.success(vote === 'confirm' ? 'Report confirmed!' : 'Report marked as false');
@@ -160,7 +220,7 @@ const MapPage = () => {
       notify.error(error.response?.data?.message || 'Failed to verify report');
       throw error;
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, userLocation, user]);
 
   const handleMapClick = (location) => {
     setSelectedLocation(location);

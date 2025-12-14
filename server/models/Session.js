@@ -12,11 +12,15 @@ const sessionSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
-    // Session token
+    // Session token (optional for socket-only sessions)
     token: {
       type: String,
-      required: true,
-      unique: true,
+      sparse: true, // Allow multiple null values with unique index
+    },
+    // Socket ID for real-time tracking
+    socketId: {
+      type: String,
+      sparse: true,
     },
     // Current location (for population tracking)
     location: {
@@ -27,7 +31,7 @@ const sessionSchema = new mongoose.Schema(
       },
       coordinates: {
         type: [Number], // [longitude, latitude] - ENCRYPTED before storage
-        required: true,
+        default: [0, 0],
       },
     },
     // Device information

@@ -231,6 +231,17 @@ const AlertDashboard = () => {
                         <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${getStatusBadge(alert.status)}`}>
                           {alert.status}
                         </span>
+                        {/* Community Verified Badge */}
+                        {alert.metadata?.communityVerified && (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 flex items-center gap-1">
+                            👥 Community Verified
+                          </span>
+                        )}
+                        {alert.source?.type === 'report' && (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            📢 From Report
+                          </span>
+                        )}
                         <span className="text-sm text-gray-500">
                           {alert.category}
                         </span>
